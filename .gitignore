@@ -1,0 +1,26 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Data
+data/
+
+# Deno
+.deno/
+deno.lock
+
+# Build/cache
+*.tsbuildinfo
+.cache/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store

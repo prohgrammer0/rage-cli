@@ -1,0 +1,128 @@
+import type { ZenClient } from "../providers/zen.ts";
+import type { RetrievalSearch } from "../retrieval/search.ts";
+import type { Renderer } from "./renderer.ts";
+import type { VaultEntry } from "../config/schema.ts";
+import { assembleContext } from "../retrieval/context.ts";
+
+const DEV_SYSTEM_PROMPT = `You are a developmental editor reviewing markdown documents. Your job is to
+provide structural and argumentative feedback. You critique logical flow,
+argument strength, missing perspectives, structural coherence, thematic
+consistency, and whether the piece achieves what it sets out to do.
+
+You NEVER rewrite the text. You identify problems, explain why they matter,
+and describe what a solution might look like without writing it. The writer
+does the writing.
+
+You have no file system access or tools. Work only from the retrieved context
+below. When referencing specific text, cite the file path and line numbers from
+the context.
+
+Retrieved context:
+{context}`;
+
+export interface DevEditorSession {
+  send(message: string, onStart?: () => void): Promise<void>;
+  resetHistory(): void;
+}
+
+export interface DevEditorConfig {
+  model: string;
+  contextMaxTokens: number;
+  topK: number;
+  vaults: VaultEntry[];
+}
+
+function resolveAtMention(mention: string, vaults: VaultEntry[]): string {
+  if (vaults.length === 1) {
+    return vaults[0].path.replace(/\/$/, "") + "/" + mention;
+  }
+  const slashIdx = mention.indexOf("/");
+  const vaultName = slashIdx === -1 ? mention : mention.slice(0, slashIdx);
+  const rest = slashIdx === -1 ? "" : mention.slice(slashIdx + 1);
+  const vault = vaults.find((v) => v.name === vaultName);
+  if (!vault) return "";
+  return vault.path.replace(/\/$/, "") + (rest ? "/" + rest : "/");
+}
+
+export function createDevEditor(
+  config: DevEditorConfig,
+  retrieval: RetrievalSearch,
+  zen: ZenClient,
+  renderer: Renderer,
+): DevEditorSession {
+  type Message = { role: "system" | "user" | "assistant"; content: string };
+  let history: Message[] = [];
+
+  return {
+    async send(message: string, onStart?: () => void): Promise<void> {
+      const mentions = [...message.matchAll(/@([\w./\-]+)/g)].map((m) => m[1]);
+      const pathMentions = mentions.filter((m) => m !== "vault");
+
+      const atResults: typeof results = [];
+      for (const mention of pathMentions) {
+        const prefix = resolveAtMention(mention, config.vaults);
+        if (!prefix) {
+          const names = config.vaults.map((v) => v.name).join(", ");
+          renderer.log("warn", `@${mention}: unknown vault. Available: ${names}`);
+          continue;
+        }
+        const chunks = retrieval.queryByPath(prefix);
+        if (chunks.length === 0) {
+          renderer.log("warn", `@${mention}: no indexed content found — check the path or run /ingest.`);
+        }
+        atResults.push(...chunks);
+      }
+
+      const results = await retrieval.query(message, config.topK);
+
+      // Merge: @-referenced chunks (distance=0) first, then semantic results, deduplicated.
+      const seen = new Set<string>();
+      const merged: typeof results = [];
+      for (const r of [...atResults, ...results]) {
+        if (!seen.has(r.id)) { seen.add(r.id); merged.push(r); }
+      }
+
+      if (merged.length === 0) {
+        renderer.log("warn", "No indexed content matched your query. Run /ingest if you haven't yet.");
+        return;
+      }
+      const context = assembleContext(merged, config.contextMaxTokens);
+
+      const systemContent = DEV_SYSTEM_PROMPT.replace("{context}", context);
+
+      const messages: Message[] = [
+        { role: "system", content: systemContent },
+        ...history,
+        { role: "user", content: message },
+      ];
+
+      const enc = new TextEncoder();
+      let fullResponse = "";
+      let started = false;
+
+      try {
+        for await (
+          const delta of zen.chat({ model: config.model, messages, stream: true })
+        ) {
+          if (!started) { onStart?.(); started = true; }
+          fullResponse += delta;
+          await Deno.stdout.write(enc.encode(delta));
+        }
+      } catch (err) {
+        renderer.log(
+          "error",
+          `Developmental editor error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
+
+      await Deno.stdout.write(enc.encode("\n"));
+      history.push({ role: "user", content: message });
+      history.push({ role: "assistant", content: fullResponse });
+    },
+
+    resetHistory(): void {
+      history = [];
+    },
+  };
+}

@@ -1,0 +1,52 @@
+vaults = []
+
+[database]
+path = "./data/rage.db"
+
+[ingest]
+chunk_size = 512
+chunk_overlap = 64
+extensions = [".md"]
+
+# EMBEDDING: ALWAYS LOCAL
+[models.embedding]
+provider = "ollama"
+model = "nomic-embed-text:latest"
+dimensions = 768
+
+# LINE EDITOR: CLOUD
+# Surgical context for prose-level critique.
+[models.line_edit]
+provider = "zen"
+default = "minimax-m2.5"
+top_k = 10
+
+# DEVELOPMENTAL EDITOR: CLOUD
+# Broad context for structural critique.
+[models.developmental]
+provider = "zen"
+default = "kimi-k2.5"
+top_k = 40
+
+[models.registry.local."nomic-embed-text:latest"]
+roles = ["embedding"]
+notes = "137M params. Required for ingestion."
+
+[models.registry.cloud."minimax-m2.5"]
+roles = ["line_edit", "developmental"]
+notes = "MiniMax M2.5. Fast, low cost. Default for line edit."
+
+[models.registry.cloud."kimi-k2.5"]
+roles = ["line_edit", "developmental"]
+notes = "Kimi K2.5 by Moonshot. Strong reasoning. Default for dev edit."
+
+[models.registry.cloud."glm-5"]
+roles = ["line_edit", "developmental"]
+notes = "GLM-5 by Zhipu. Alternative voice."
+
+[zen]
+api_key_env = "RAGE_ZEN_API_KEY"
+base_url = "https://opencode.ai/zen/v1"
+
+[ollama]
+base_url = "http://localhost:11434"
