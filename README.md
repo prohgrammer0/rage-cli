@@ -1,92 +1,129 @@
 # RAGE
 
-**Retrieval Augmented Generation Editor**
+**Project-context writing editor**
 
-A feedback-only writing tool that sits next to your Obsidian vault. It reads your markdown, indexes it locally, and gives you two kinds of critique through a chat interface: line-level and developmental. It never writes a word for you.
+A feedback-only writing tool that sits next to your notes. It reads configured
+markdown files, folders, or globs and gives you two kinds of critique through a
+chat interface: line-level and developmental. It never writes a word for you.
 
 ---
 
 ## How It Works
 
-Local body, cloud brain. Your vault is indexed locally — embeddings and vector search never leave your machine. When you ask for feedback, your query is embedded locally, relevant chunks are retrieved from SQLite, and the query plus context are sent to a cloud model via OpenCode Zen for critique.
+RAGE uses full-project context, not RAG. There are no embeddings, chunks,
+retrieval queries, vector database, SQLite database, or local inference service.
 
-**Line editor** — sentence and paragraph-level critique. Clarity, word choice, rhythm, redundancy, grammar, precision.
+At startup, RAGE:
 
-**Developmental editor** — structural and argumentative critique. Logical flow, argument strength, missing perspectives, thematic coherence.
+1. Resolves one named project profile or the configured global sources.
+2. Recursively walks directory and glob sources.
+3. Skips hidden files and directories, including `.obsidian`.
+4. Filters directory and glob results by `context.extensions`.
+5. Sorts paths deterministically.
+6. Reads each file, adds its path and line numbers, and combines everything into
+   one in-memory project context pack.
 
-Neither editor rewrites your text. They tell you what's wrong and why. You do the writing.
+The pack is placed in the stable system prompt and sent with every request
+through OpenCode Zen. Claude and Qwen requests mark that stable prompt
+cacheable. The pack is built once per session, so restart RAGE after changing
+project files.
+
+**Line editor** — sentence and paragraph-level critique. Clarity, word choice,
+rhythm, redundancy, grammar, precision.
+
+**Developmental editor** — structural and argumentative critique. Logical flow,
+argument strength, missing perspectives, thematic coherence.
+
+Neither editor rewrites your text. They tell you what's wrong and why. You do
+the writing.
 
 ## What It Doesn't Do
 
 - Generate prose, rewrites, or suggestions
 - Modify your files
-- Send your vault to the cloud (embeddings and storage are always local)
-- Require an account for indexing
+- Index, embed, chunk, or retrieve project files
+- Refresh project files while a session is running
+- Hide cloud context use: included source files are sent to Zen/provider for
+  critique
 
 ## Stack
 
-Deno, SQLite, Ollama (embeddings only), OpenCode Zen (cloud inference).
+Deno and OpenCode Zen for cloud inference.
 
 ## Requirements
 
 - [Deno](https://deno.com/) (latest stable)
-- [Ollama](https://ollama.com/) running locally with `nomic-embed-text` pulled
 - An [OpenCode Zen](https://opencode.ai/zen) API key
 
 ## Setup
 
-**1. Pull the embedding model**
+**1. Create a `.env` file**
 
-```bash
-ollama pull nomic-embed-text
-```
-
-**2. Create a `.env` file**
-
-```bash
-cp .env.sample .env
-# edit .env with your vault path and Zen API key
-```
+Create or edit `.env` with your Zen API key.
 
 `.env` format (no `export` prefix — Deno's `--env-file` doesn't support it):
 
 ```
-RAGE_VAULT_PATH=/path/to/your/vault
 RAGE_ZEN_API_KEY=your-zen-api-key
 ```
 
-**3. Index your vault**
+**2. Create a project config**
 
-```bash
-deno task ingest
+Use absolute paths. Do not rely on `~` expansion inside config files.
+
+```toml
+[context]
+extensions = [".md"]
+max_tokens = 180000
+cache = true
+
+[projects.blog]
+sources = [{ path = "/Users/you/notes/blog", name = "blog" }]
+
+[projects.drafts]
+sources = [{ path = "/Users/you/notes/drafts", name = "drafts" }]
+
+[projects.book]
+sources = [{ path = "/Users/you/notes/book/**/*.md", name = "book" }]
 ```
 
-**4. Start editing**
+Each profile is a selectable source set. Exact file sources are included
+explicitly. Directory and glob sources use `context.extensions` as the file
+filter. Selecting a profile loads only that profile; project sources are not
+combined unless they are listed together in the same profile.
+
+**3. Start editing**
 
 ```bash
+deno task edit --config config.toml --project blog
+```
+
+For a single folder, the older vault shorthand still works:
+
+```bash
+RAGE_VAULT_PATH=/absolute/path/to/your/obsidian/vault
 deno task edit
 ```
 
-### Running without .env
+### Running Without .env
 
 Pass everything via flags or environment variables directly:
 
 ```bash
-deno task ingest -- --vault ~/notes
-deno task edit -- --vault ~/notes
+RAGE_ZEN_API_KEY=sk-... deno task edit --config config.toml --project blog
 ```
 
-Or inline:
+Or use the backward-compatible folder shorthand:
 
 ```bash
-RAGE_VAULT_PATH=~/notes RAGE_ZEN_API_KEY=sk-... deno task edit
+RAGE_ZEN_API_KEY=sk-... deno task edit --vault "/Users/you/Obsidian Vault"
 ```
 
 ### Compiling to a binary
 
 ```bash
 deno compile \
-  --allow-read --allow-write --allow-net --allow-env --allow-ffi \
+  --allow-read --allow-net --allow-env \
   --output rage \
   src/main.ts
 ```
@@ -94,11 +131,36 @@ deno compile \
 Then run it directly:
 
 ```bash
-./rage ingest --vault ~/notes
-./rage edit --vault ~/notes
+./rage edit --config config.toml --project blog
 ```
 
-Note: `--allow-ffi` is required because SQLite is loaded via FFI. The compiled binary includes all Deno source but still needs the system SQLite library at runtime.
+## Models
+
+The default registry contains the Zen models enabled for this project:
+
+- Claude Opus 4.8
+- Claude Sonnet 4.6
+- GPT 5.5
+- GPT 5.5 Pro
+- Gemini 3.1 Pro
+- Gemini 3.5 Flash
+- DeepSeek V4 Flash
+- DeepSeek V4 Pro
+- GLM 5.2
+- Kimi K2.6
+- Qwen3.6 Plus
+- MiniMax M2.7
+
+Gemini 3.5 Flash is the default line editor. Claude Opus 4.8 is the default
+developmental editor. RAGE checks Zen's live model catalog at startup and only
+offers models available to the current API key.
+
+When a provider exposes thinking or a reasoning summary, RAGE shows the complete
+text in a dimmed block before the answer. Provider bursts are paced into small
+terminal writes for smoother rendering. Claude uses adaptive thinking with
+summarized display, while GPT and Gemini opt into their summary protocols. Other
+models display thinking when Zen emits it. Thinking is not added to conversation
+history.
 
 ## REPL Commands
 
@@ -107,65 +169,126 @@ Note: `--allow-ffi` is required because SQLite is loaded via FFI. The compiled b
 /role dev           Switch to developmental editor
 /model              List available models for current role
 /model <tag>        Switch model (resets conversation)
-/ingest             Re-index the vault
 /status             Show current state
 /help               List commands
 /quit               Exit
 ```
 
-## @-Mentions
+## @-Path Completion
 
-Reference specific files or directories to force them into the model's context, bypassing pure semantic retrieval:
+All included files are already in project context. You can still type `@path`
+references as a precise cue to the model, and the REPL completes paths from the
+built project context:
 
-**Single vault:**
+**Named sources:**
+
+```
+@personal/essay.md what's wrong with the opening?
+@work/reports/ review everything in this folder
+look at @research/themes.md and tell me what's working
+```
+
+**Vault shorthand** — paths are relative to the vault root for one vault, or
+prefixed with the vault name for multiple vaults:
+
 ```
 @drafts/my-essay.md what's wrong with the opening?
-@drafts/ review everything in this folder
-look at @journal/2026-03-06.md and tell me what's working
+@notes/drafts/my-essay.md compare this against @work/reports/
 ```
 
-**Multiple vaults** — prefix with the vault name (the directory basename):
-```
-@notes/drafts/my-essay.md what's wrong with the opening?
-@work/reports/ review everything in this folder
-```
-
-- **File** — fetches all indexed chunks for that file
-- **Directory** — fetches all chunks for every file under that path
-- Paths are relative to the vault root; multi-vault paths are relative to the named vault
+- Named file, directory, and glob sources use the configured `name` prefix
 - Ghost text completes paths as you type — Tab or → to accept
-
-If a path has no indexed content, you'll get a warning to run `/ingest`.
 
 ## Input
 
 - **Enter** — submit
 - **Shift+Enter** — new line
+- **Paste** — preserve multiline text as one prompt
 - **Backspace** — delete character; at start of line, merges with previous line
-- **Ctrl+C** — exit
+- **Ctrl+C** — cancel an active response; press again to force-exit
+- **↑** or **↓** — navigate prompts entered during the current session
 - **Tab** or **→** — accept ghost completion (for `/commands` and `@paths`)
 
 ## Configuration
 
-RAGE loads `config.default.toml` as the base config. Override with `--config <path>` or environment variables:
+RAGE loads `config.default.toml` as the base config. Override with
+`--config <path>` or environment variables:
 
-| Variable | Purpose |
-|---|---|
-| `RAGE_VAULT_PATH` | Single vault path (backward compatible) |
+| Variable           | Purpose                                         |
+| ------------------ | ----------------------------------------------- |
+| `RAGE_VAULT_PATH`  | Single vault path (backward compatible)         |
 | `RAGE_VAULT_PATHS` | Comma-separated vault paths for multiple vaults |
-| `RAGE_ZEN_API_KEY` | API key for OpenCode Zen |
-| `RAGE_DB_PATH` | Override database path (default: `./data/rage.db`) |
+| `RAGE_PROJECT`     | Named `[projects.<name>]` source profile        |
+| `RAGE_ZEN_API_KEY` | API key for OpenCode Zen                        |
 
 CLI flags are also supported:
 
 ```
---vault <path>        Vault path (repeat for multiple: --vault /a --vault /b)
+--vault <path>        Backward-compatible directory source (repeatable)
 --config <path>       TOML config file
+--project <name>      Use a named [projects.<name>] source profile
 --model-line <tag>    Model for line editing
 --model-dev <tag>     Model for developmental editing
 ```
 
-### Multiple vaults
+### Context
+
+The project context pack is controlled by:
+
+```toml
+[context]
+extensions = [".md"]
+max_tokens = 180000
+cache = true
+
+[[context.sources]]
+path = "/absolute/path/to/file-or-folder-or/**/*.md"
+name = "optional-display-prefix"
+```
+
+`context.sources` is the main list of project files. A source can be an exact
+file, a directory, or a simple `*`/`**` glob. `extensions` controls which files
+are included from directories and globs. Exact files are included regardless of
+extension. `max_tokens` caps the deterministic project prompt. `cache = true`
+marks the stable project block cacheable for Zen models that use the
+Anthropic-compatible endpoint.
+
+Token counts use `Math.ceil(text.length / 4)`. Files are considered in sorted
+path order. If a file would exceed `context.max_tokens`, it is omitted and RAGE
+reports how many files were skipped. This warning is a context-window safeguard,
+not retrieval behavior: it means the model did not receive the entire project.
+Increase `max_tokens` or narrow the selected project's sources when it appears.
+
+Directory sources include every matching file. If a directory contains a
+generated aggregate of its source files, either exclude the aggregate from the
+source set or load it alone; including both duplicates context.
+
+### Project profiles
+
+When you do not use every source set at once, define named profiles:
+
+```toml
+[projects.blog]
+sources = [{ path = "/absolute/path/to/blog", name = "blog" }]
+
+[projects.book]
+sources = [
+  { path = "/absolute/path/to/book", name = "book" },
+  { path = "/absolute/path/to/shared-style.md", name = "style.md" },
+]
+```
+
+Then select one for a session:
+
+```bash
+deno task edit --config config.toml --project blog
+RAGE_PROJECT=book deno task edit --config config.toml
+```
+
+Selecting a project profile replaces global `context.sources` and legacy vault
+shorthand sources for that run.
+
+### Vault shorthand
 
 ```bash
 # Via CLI
@@ -180,9 +303,19 @@ RAGE_VAULT_PATHS=/Users/you/notes,/Users/you/work
 
 Vault names for @-mention completion are derived from the directory basename.
 
+## Development
+
+```bash
+deno task test
+deno fmt --check
+deno lint
+deno check src/main.ts
+```
+
 ## Architecture
 
-`ARCHITECTURE.md` defines module interfaces and contracts. Read it before making changes.
+`ARCHITECTURE.md` defines module interfaces and contracts. Read it before making
+changes.
 
 ## Project Status
 

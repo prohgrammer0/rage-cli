@@ -22,8 +22,18 @@ Deno.test("ZenClient - fetchCatalog returns model IDs from /models endpoint", as
       Response.json({
         object: "list",
         data: [
-          { id: "minimax-m2.5", object: "model", created: 0, owned_by: "opencode" },
-          { id: "kimi-k2.5", object: "model", created: 0, owned_by: "opencode" },
+          {
+            id: "minimax-m2.5",
+            object: "model",
+            created: 0,
+            owned_by: "opencode",
+          },
+          {
+            id: "kimi-k2.5",
+            object: "model",
+            created: 0,
+            owned_by: "opencode",
+          },
           { id: "glm-5", object: "model", created: 0, owned_by: "opencode" },
         ],
       }),
@@ -64,13 +74,205 @@ Deno.test("ZenClient - chat non-streaming yields full content", async () => {
   );
 });
 
+Deno.test("ZenClient - Claude messages request uses cacheable system block", async () => {
+  await withMockServer(
+    async (req) => {
+      const url = new URL(req.url);
+      assertEquals(url.pathname, "/messages");
+      assertEquals(req.headers.get("Authorization"), "Bearer test-key");
+      assertEquals(req.headers.get("anthropic-version"), "2023-06-01");
+
+      const body = await req.json();
+      assertEquals(body.model, "claude-sonnet-4-5");
+      assertEquals(body.stream, false);
+      assertEquals(body.system[0].cache_control.type, "ephemeral");
+      assertEquals(body.system[0].text, "Stable project context");
+      assertEquals(body.messages, [{ role: "user", content: "Review this." }]);
+      assertEquals(body.max_tokens, 8192);
+      assertEquals(body.thinking, {
+        type: "adaptive",
+        display: "summarized",
+      });
+      assertEquals(body.output_config, { effort: "medium" });
+
+      return Response.json({
+        content: [{ type: "text", text: "Good feedback." }],
+      });
+    },
+    async (base) => {
+      const client = createZenClient(base, "test-key");
+      const chunks: string[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "claude-sonnet-4-5",
+          messages: [
+            { role: "system", content: "Stable project context" },
+            { role: "user", content: "Review this." },
+          ],
+          stream: false,
+          cacheSystemPrompt: true,
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Good feedback."]);
+    },
+  );
+});
+
+Deno.test("ZenClient - Qwen messages omit Claude thinking parameters", async () => {
+  await withMockServer(
+    async (req) => {
+      const body = await req.json();
+      assertEquals(body.model, "qwen3.6-plus");
+      assertEquals(body.max_tokens, 4096);
+      assertEquals(body.thinking, undefined);
+      assertEquals(body.output_config, undefined);
+      return Response.json({
+        content: [{ type: "text", text: "Feedback." }],
+      });
+    },
+    async (base) => {
+      const client = createZenClient(base, "test-key");
+      const chunks: string[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "qwen3.6-plus",
+          messages: [{ role: "user", content: "Review this." }],
+          stream: false,
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Feedback."]);
+    },
+  );
+});
+
+Deno.test("ZenClient - GPT models use the responses endpoint", async () => {
+  await withMockServer(
+    async (req) => {
+      const url = new URL(req.url);
+      assertEquals(url.pathname, "/responses");
+
+      const body = await req.json();
+      assertEquals(body.model, "gpt-5.5");
+      assertEquals(body.input, [
+        { role: "system", content: "Stable project context" },
+        { role: "user", content: "Review this." },
+      ]);
+      assertEquals(body.max_output_tokens, 2048);
+      assertEquals(body.reasoning, {
+        effort: "medium",
+        summary: "auto",
+      });
+
+      return Response.json({
+        output: [{
+          content: [{ type: "output_text", text: "Good feedback." }],
+        }],
+      });
+    },
+    async (base) => {
+      const client = createZenClient(base, "test-key");
+      const chunks: string[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "gpt-5.5",
+          messages: [
+            { role: "system", content: "Stable project context" },
+            { role: "user", content: "Review this." },
+          ],
+          stream: false,
+          maxTokens: 2048,
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Good feedback."]);
+    },
+  );
+});
+
+Deno.test("ZenClient - Gemini models use generateContent", async () => {
+  await withMockServer(
+    async (req) => {
+      const url = new URL(req.url);
+      assertEquals(
+        url.pathname,
+        "/models/gemini-3.5-flash:generateContent",
+      );
+      assertEquals(req.headers.get("x-goog-api-key"), "test-key");
+      assertEquals(req.headers.get("Authorization"), null);
+
+      const body = await req.json();
+      assertEquals(body.systemInstruction, {
+        parts: [{ text: "Stable project context" }],
+      });
+      assertEquals(body.contents, [
+        { role: "user", parts: [{ text: "First question." }] },
+        { role: "model", parts: [{ text: "First answer." }] },
+        { role: "user", parts: [{ text: "Review this." }] },
+      ]);
+      assertEquals(body.generationConfig.thinkingConfig, {
+        includeThoughts: true,
+      });
+
+      return Response.json({
+        candidates: [{
+          content: { parts: [{ text: "Good feedback." }] },
+        }],
+      });
+    },
+    async (base) => {
+      const client = createZenClient(base, "test-key");
+      const chunks: string[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "gemini-3.5-flash",
+          messages: [
+            { role: "system", content: "Stable project context" },
+            { role: "user", content: "First question." },
+            { role: "assistant", content: "First answer." },
+            { role: "user", content: "Review this." },
+          ],
+          stream: false,
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Good feedback."]);
+    },
+  );
+});
+
 // --- chat (streaming / SSE) ---
 
 Deno.test("ZenClient - chat streaming yields content deltas via SSE", async () => {
   const sseBody = [
-    `data: ${JSON.stringify({ choices: [{ delta: { content: "Structural" }, finish_reason: null }] })}`,
-    `data: ${JSON.stringify({ choices: [{ delta: { content: " issue" }, finish_reason: null }] })}`,
-    `data: ${JSON.stringify({ choices: [{ delta: { content: "." }, finish_reason: "stop" }] })}`,
+    `data: ${
+      JSON.stringify({
+        choices: [{
+          delta: { reasoning_content: "Reviewing structure." },
+          finish_reason: null,
+        }],
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        choices: [{ delta: { content: "Structural" }, finish_reason: null }],
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        choices: [{ delta: { content: " issue" }, finish_reason: null }],
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        choices: [{ delta: { content: "." }, finish_reason: "stop" }],
+      })
+    }`,
     "data: [DONE]",
   ].join("\n") + "\n";
 
@@ -82,25 +284,191 @@ Deno.test("ZenClient - chat streaming yields content deltas via SSE", async () =
     async (base) => {
       const client = createZenClient(base, "key");
       const chunks: string[] = [];
+      const thinking: string[] = [];
       for await (
         const chunk of client.chat({
           model: "minimax-m2.5",
           messages: [{ role: "user", content: "Critique this." }],
           stream: true,
+          onThinking: (text) => thinking.push(text),
         })
       ) {
         chunks.push(chunk);
       }
       assertEquals(chunks, ["Structural", " issue", "."]);
+      assertEquals(thinking, ["Reviewing structure."]);
+    },
+  );
+});
+
+Deno.test("ZenClient - Claude messages streaming yields text deltas via SSE", async () => {
+  const sseBody = [
+    `data: ${JSON.stringify({ type: "message_start", message: {} })}`,
+    `data: ${
+      JSON.stringify({
+        type: "content_block_delta",
+        delta: { type: "thinking_delta", thinking: "Checking context." },
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: "Project" },
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: " issue" },
+      })
+    }`,
+    `data: ${JSON.stringify({ type: "message_stop" })}`,
+  ].join("\n") + "\n";
+
+  await withMockServer(
+    () =>
+      new Response(sseBody, {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    async (base) => {
+      const client = createZenClient(base, "key");
+      const chunks: string[] = [];
+      const thinking: string[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "claude-haiku-4-5",
+          messages: [{ role: "user", content: "Critique this." }],
+          stream: true,
+          onThinking: (text) => thinking.push(text),
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Project", " issue"]);
+      assertEquals(thinking, ["Checking context."]);
+    },
+  );
+});
+
+Deno.test("ZenClient - GPT responses streaming yields text deltas via SSE", async () => {
+  const sseBody = [
+    `data: ${
+      JSON.stringify({
+        type: "response.reasoning_summary_text.delta",
+        delta: "Checking context.",
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        type: "response.output_text.delta",
+        delta: "Project",
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        type: "response.output_text.delta",
+        delta: " issue",
+      })
+    }`,
+    `data: ${JSON.stringify({ type: "response.completed" })}`,
+  ].join("\n") + "\n";
+
+  await withMockServer(
+    (req) => {
+      assertEquals(new URL(req.url).pathname, "/responses");
+      return new Response(sseBody, {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+    async (base) => {
+      const client = createZenClient(base, "key");
+      const chunks: string[] = [];
+      const thinking: string[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "gpt-5.5",
+          messages: [{ role: "user", content: "Critique this." }],
+          stream: true,
+          onThinking: (text) => thinking.push(text),
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Project", " issue"]);
+      assertEquals(thinking, ["Checking context."]);
+    },
+  );
+});
+
+Deno.test("ZenClient - Gemini streaming yields candidate text via SSE", async () => {
+  const sseBody = [
+    `data: ${
+      JSON.stringify({
+        candidates: [{
+          content: { parts: [{ text: "Checking context.", thought: true }] },
+        }],
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "Project" }] } }],
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        candidates: [{
+          content: { parts: [{ text: " issue" }] },
+          finishReason: "STOP",
+        }],
+      })
+    }`,
+  ].join("\n") + "\n";
+
+  await withMockServer(
+    (req) => {
+      const url = new URL(req.url);
+      assertEquals(
+        url.pathname,
+        "/models/gemini-3.5-flash:streamGenerateContent",
+      );
+      assertEquals(url.searchParams.get("alt"), "sse");
+      return new Response(sseBody, {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+    async (base) => {
+      const client = createZenClient(base, "key");
+      const chunks: string[] = [];
+      const thinking: string[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "gemini-3.5-flash",
+          messages: [{ role: "user", content: "Critique this." }],
+          stream: true,
+          onThinking: (text) => thinking.push(text),
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Project", " issue"]);
+      assertEquals(thinking, ["Checking context."]);
     },
   );
 });
 
 Deno.test("ZenClient - chat streaming stops at [DONE]", async () => {
   const sseBody = [
-    `data: ${JSON.stringify({ choices: [{ delta: { content: "Only this" }, finish_reason: null }] })}`,
+    `data: ${
+      JSON.stringify({
+        choices: [{ delta: { content: "Only this" }, finish_reason: null }],
+      })
+    }`,
     "data: [DONE]",
-    `data: ${JSON.stringify({ choices: [{ delta: { content: "never" }, finish_reason: null }] })}`,
+    `data: ${
+      JSON.stringify({
+        choices: [{ delta: { content: "never" }, finish_reason: null }],
+      })
+    }`,
   ].join("\n") + "\n";
 
   await withMockServer(
@@ -148,7 +516,12 @@ Deno.test("ZenClient - fetchCatalog result is cached on second call", async () =
       callCount++;
       return Response.json({
         object: "list",
-        data: [{ id: "minimax-m2.5", object: "model", created: 0, owned_by: "opencode" }],
+        data: [{
+          id: "minimax-m2.5",
+          object: "model",
+          created: 0,
+          owned_by: "opencode",
+        }],
       });
     },
     async (base) => {

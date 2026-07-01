@@ -1,6 +1,6 @@
 // Pure type definitions. Zero imports from this codebase.
 
-export type ModelRole = "line_edit" | "developmental" | "embedding";
+export type ModelRole = "line_edit" | "developmental";
 
 export interface VaultEntry {
   /** Absolute path to the vault directory. */
@@ -13,44 +13,39 @@ export interface VaultEntry {
   name: string;
 }
 
-export interface DatabaseConfig {
+export interface ProjectSourceEntry {
+  /** File, directory, or simple glob path to include in project context. */
   path: string;
+  /** Optional display prefix/name used in context paths and @-completion. */
+  name?: string;
 }
 
-export interface IngestConfig {
-  chunk_size: number;
-  chunk_overlap: number;
+export interface ProjectProfileConfig {
+  /** Sources used when this named project profile is selected. */
+  sources: ProjectSourceEntry[];
+}
+
+export interface ContextConfig {
+  sources: ProjectSourceEntry[];
   extensions: string[];
-}
-
-export interface EmbeddingModelConfig {
-  provider: "ollama";
-  model: string;
-  dimensions: number;
+  max_tokens: number;
+  cache: boolean;
 }
 
 export interface RoleModelConfig {
-  provider: "ollama" | "zen";
+  provider: "zen";
   default: string;
-  top_k: number;
 }
 
-export interface LocalModelRegistryEntry {
+export interface CloudModelRegistryEntry {
   roles: ModelRole[];
   notes: string;
 }
 
-export interface CloudModelRegistryEntry {
-  roles: Exclude<ModelRole, "embedding">[];
-  notes: string;
-}
-
 export interface ModelsConfig {
-  embedding: EmbeddingModelConfig;
   line_edit: RoleModelConfig;
   developmental: RoleModelConfig;
   registry: {
-    local: Record<string, LocalModelRegistryEntry>;
     cloud: Record<string, CloudModelRegistryEntry>;
   };
 }
@@ -60,15 +55,11 @@ export interface ZenConfig {
   base_url: string;
 }
 
-export interface OllamaConfig {
-  base_url: string;
-}
-
 export interface AppConfig {
+  selected_project?: string;
+  projects: Record<string, ProjectProfileConfig>;
   vaults: VaultEntry[];
-  database: DatabaseConfig;
-  ingest: IngestConfig;
+  context: ContextConfig;
   models: ModelsConfig;
   zen: ZenConfig;
-  ollama: OllamaConfig;
 }

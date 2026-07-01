@@ -1,52 +1,78 @@
 vaults = []
 
-[database]
-path = "./data/rage.db"
+# Named source profiles. In your own config file, add [projects.<name>] tables
+# with a sources array, then run with --project <name> or RAGE_PROJECT=<name>.
+projects = {}
 
-[ingest]
-chunk_size = 512
-chunk_overlap = 64
+[context]
+# Claude Projects-like stable project prompt.
+# Empty by default. In your own config file, use [[context.sources]] entries
+# for exact files, directories, or simple globs; see README.md for examples.
+sources = []
 extensions = [".md"]
-
-# EMBEDDING: ALWAYS LOCAL
-[models.embedding]
-provider = "ollama"
-model = "nomic-embed-text:latest"
-dimensions = 768
+max_tokens = 180000
+cache = true
 
 # LINE EDITOR: CLOUD
-# Surgical context for prose-level critique.
+# Fast long-context model for prose-level critique.
 [models.line_edit]
 provider = "zen"
-default = "minimax-m2.5"
-top_k = 10
+default = "gemini-3.5-flash"
 
 # DEVELOPMENTAL EDITOR: CLOUD
-# Broad context for structural critique.
+# Strong long-context model for structural critique.
 [models.developmental]
 provider = "zen"
-default = "kimi-k2.5"
-top_k = 40
+default = "claude-opus-4-8"
 
-[models.registry.local."nomic-embed-text:latest"]
-roles = ["embedding"]
-notes = "137M params. Required for ingestion."
-
-[models.registry.cloud."minimax-m2.5"]
+[models.registry.cloud."gemini-3.5-flash"]
 roles = ["line_edit", "developmental"]
-notes = "MiniMax M2.5. Fast, low cost. Default for line edit."
+notes = "Gemini 3.5 Flash. Fast 1M-context default for line editing."
 
-[models.registry.cloud."kimi-k2.5"]
+[models.registry.cloud."gemini-3.1-pro"]
 roles = ["line_edit", "developmental"]
-notes = "Kimi K2.5 by Moonshot. Strong reasoning. Default for dev edit."
+notes = "Gemini 3.1 Pro. Strong 1M-context project-level reader."
 
-[models.registry.cloud."glm-5"]
+[models.registry.cloud."claude-opus-4-8"]
 roles = ["line_edit", "developmental"]
-notes = "GLM-5 by Zhipu. Alternative voice."
+notes = "Claude Opus 4.8. Highest-cost cached 1M-context option for difficult reads."
+
+[models.registry.cloud."claude-sonnet-4-6"]
+roles = ["line_edit", "developmental"]
+notes = "Claude Sonnet 4.6. Balanced cached 1M-context option."
+
+[models.registry.cloud."deepseek-v4-pro"]
+roles = ["line_edit", "developmental"]
+notes = "DeepSeek V4 Pro. Strong 1M-context OpenAI-compatible model."
+
+[models.registry.cloud."deepseek-v4-flash"]
+roles = ["line_edit", "developmental"]
+notes = "DeepSeek V4 Flash. Fast 1M-context OpenAI-compatible model."
+
+[models.registry.cloud."glm-5.2"]
+roles = ["line_edit", "developmental"]
+notes = "GLM 5.2 via Zen's OpenAI-compatible endpoint."
+
+[models.registry.cloud."kimi-k2.6"]
+roles = ["line_edit", "developmental"]
+notes = "Kimi K2.6 via Zen's OpenAI-compatible endpoint."
+
+[models.registry.cloud."qwen3.6-plus"]
+roles = ["line_edit", "developmental"]
+notes = "Qwen3.6 Plus. Current Zen Qwen long-context model; Anthropic-compatible cached endpoint."
+
+[models.registry.cloud."minimax-m2.7"]
+roles = ["line_edit", "developmental"]
+notes = "MiniMax M2.7 via Zen's OpenAI-compatible endpoint."
+
+[models.registry.cloud."gpt-5.5-pro"]
+roles = ["line_edit", "developmental"]
+notes = "GPT-5.5 Pro. Strong 1M-context OpenAI-compatible model."
+
+[models.registry.cloud."gpt-5.5"]
+roles = ["line_edit", "developmental"]
+notes = "GPT-5.5. General 1M-context OpenAI-compatible model."
 
 [zen]
 api_key_env = "RAGE_ZEN_API_KEY"
 base_url = "https://opencode.ai/zen/v1"
-
-[ollama]
-base_url = "http://localhost:11434"

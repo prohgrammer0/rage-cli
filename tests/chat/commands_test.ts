@@ -5,8 +5,20 @@ import { createModelRegistry } from "../../src/config/models.ts";
 import { loadConfig } from "../../src/config/loader.ts";
 import type { CommandContext } from "../../src/chat/commands.ts";
 
-const LOCAL = ["nomic-embed-text:latest"];
-const ZEN = ["minimax-m2.5", "kimi-k2.5", "glm-5"];
+const ZEN = [
+  "gemini-3.5-flash",
+  "gemini-3.1-pro",
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+  "deepseek-v4-pro",
+  "deepseek-v4-flash",
+  "glm-5.2",
+  "kimi-k2.6",
+  "qwen3.6-plus",
+  "minimax-m2.7",
+  "gpt-5.5-pro",
+  "gpt-5.5",
+];
 
 async function makeCtx(): Promise<{
   ctx: CommandContext;
@@ -16,7 +28,7 @@ async function makeCtx(): Promise<{
 }> {
   const config = await loadConfig({});
   const registry = createModelRegistry(config);
-  registry.initialize(LOCAL, ZEN);
+  registry.initialize(ZEN);
 
   const roleChanges: string[] = [];
   const modelChanges: string[] = [];
@@ -25,21 +37,9 @@ async function makeCtx(): Promise<{
   const ctx: CommandContext = {
     role: "line",
     modelRegistry: registry,
-    queries: {
-      upsertChunk: () => {},
-      pruneFile: () => [],
-      getChunk: () => null,
-      getChunkIdsByFile: () => [],
-      search: () => [],
-      getFileState: () => null,
-      setFileState: () => {},
-      hasChunks: () => true,
-      countStaleFiles: () => 0,
-      getAllFilePaths: () => [],
-      getChunksByPathPrefix: () => [],
-    },
-    pipeline: null,
-    pipelineOptions: null,
+    sourceLabel: "/notes/a.md, /notes/b.md",
+    fileCount: 3,
+    contextTokens: 1200,
     renderer: createRenderer({ useColor: false }),
     onRoleChange: (r) => roleChanges.push(r),
     onModelChange: (m) => modelChanges.push(m),
@@ -82,9 +82,9 @@ Deno.test("Commands - /model without tag lists models", async () => {
 
 Deno.test("Commands - /model <tag> switches model when available", async () => {
   const { ctx, modelChanges } = await makeCtx();
-  const result = await handleCommand("/model minimax-m2.5", ctx);
+  const result = await handleCommand("/model claude-opus-4-8", ctx);
   assertEquals(result.type, "ok");
-  assertEquals(modelChanges, ["minimax-m2.5"]);
+  assertEquals(modelChanges, ["claude-opus-4-8"]);
 });
 
 Deno.test("Commands - /model <tag> with unavailable model returns ok (logs error)", async () => {
@@ -92,43 +92,6 @@ Deno.test("Commands - /model <tag> with unavailable model returns ok (logs error
   const result = await handleCommand("/model nonexistent:model", ctx);
   assertEquals(result.type, "ok");
   assertEquals(modelChanges.length, 0);
-});
-
-// --- /ingest ---
-
-Deno.test("Commands - /ingest without pipeline logs error", async () => {
-  const { ctx } = await makeCtx();
-  const result = await handleCommand("/ingest", ctx);
-  assertEquals(result.type, "ok");
-});
-
-Deno.test("Commands - /ingest with pipeline calls pipeline.run", async () => {
-  const { ctx } = await makeCtx();
-  let ran = false;
-  ctx.pipeline = {
-    run: async () => {
-      ran = true;
-      return {
-        filesScanned: 1,
-        filesSkipped: 0,
-        filesProcessed: 1,
-        filesPruned: 0,
-        chunksCreated: 2,
-        chunksReused: 0,
-        chunksPruned: 0,
-      };
-    },
-  };
-  ctx.pipelineOptions = [{
-    vaultPath: "/vault",
-    extensions: [".md"],
-    chunkSize: 512,
-    chunkOverlap: 64,
-    embeddingModel: "nomic-embed-text",
-  }];
-  const result = await handleCommand("/ingest", ctx);
-  assertEquals(result.type, "ok");
-  assertEquals(ran, true);
 });
 
 // --- /help ---
@@ -144,7 +107,9 @@ Deno.test("Commands - /help returns ok", async () => {
 Deno.test("Commands - /quit returns quit result", async () => {
   const { ctx } = await makeCtx();
   let quitCalled = false;
-  ctx.onQuit = () => { quitCalled = true; };
+  ctx.onQuit = () => {
+    quitCalled = true;
+  };
   const result = await handleCommand("/quit", ctx);
   assertEquals(result.type, "quit");
   assertEquals(quitCalled, true);

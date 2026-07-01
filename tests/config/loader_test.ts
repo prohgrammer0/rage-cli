@@ -4,17 +4,14 @@ import { loadConfig } from "../../src/config/loader.ts";
 Deno.test("loadConfig - loads default config without user overrides", async () => {
   const config = await loadConfig({});
 
-  assertEquals(config.database.path, "./data/rage.db");
-  assertEquals(config.ingest.chunk_size, 512);
-  assertEquals(config.ingest.chunk_overlap, 64);
-  assertEquals(config.ingest.extensions, [".md"]);
-  assertEquals(config.models.embedding.model, "nomic-embed-text:latest");
-  assertEquals(config.models.embedding.dimensions, 768);
-  assertEquals(config.models.line_edit.default, "minimax-m2.5");
-  assertEquals(config.models.line_edit.top_k, 10);
-  assertEquals(config.models.developmental.default, "kimi-k2.5");
-  assertEquals(config.models.developmental.top_k, 40);
-  assertEquals(config.ollama.base_url, "http://localhost:11434");
+  assertEquals(config.projects, {});
+  assertEquals(config.selected_project, undefined);
+  assertEquals(config.context.sources, []);
+  assertEquals(config.context.extensions, [".md"]);
+  assertEquals(config.context.max_tokens, 180000);
+  assertEquals(config.context.cache, true);
+  assertEquals(config.models.line_edit.default, "gemini-3.5-flash");
+  assertEquals(config.models.developmental.default, "claude-opus-4-8");
   assertEquals(config.zen.api_key_env, "RAGE_ZEN_API_KEY");
   assertEquals(config.zen.base_url, "https://opencode.ai/zen/v1");
 });
@@ -61,16 +58,6 @@ Deno.test("loadConfig - RAGE_VAULT_PATHS env var sets multiple vaults", async ()
   }
 });
 
-Deno.test("loadConfig - RAGE_DB_PATH env var overrides config", async () => {
-  Deno.env.set("RAGE_DB_PATH", "/tmp/test.db");
-  try {
-    const config = await loadConfig({});
-    assertEquals(config.database.path, "/tmp/test.db");
-  } finally {
-    Deno.env.delete("RAGE_DB_PATH");
-  }
-});
-
 Deno.test("loadConfig - env var takes precedence over CLI override for vault", async () => {
   Deno.env.set("RAGE_VAULT_PATH", "/env/vault");
   try {
@@ -92,18 +79,121 @@ Deno.test("loadConfig - merges user config file on top of defaults", async () =>
 path = "/custom/vault"
 name = "custom"
 
-[ingest]
-chunk_size = 256
+[context]
+max_tokens = 256
 `,
     );
 
     const config = await loadConfig({ configPath: tmpFile });
     assertEquals(config.vaults.length, 1);
     assertEquals(config.vaults[0].path, "/custom/vault");
-    assertEquals(config.ingest.chunk_size, 256);
+    assertEquals(config.context.max_tokens, 256);
     // Unchanged fields still come from defaults.
-    assertEquals(config.ingest.chunk_overlap, 64);
-    assertEquals(config.models.embedding.model, "nomic-embed-text:latest");
+    assertEquals(config.context.cache, true);
+    assertEquals(config.models.line_edit.default, "gemini-3.5-flash");
+  } finally {
+    await Deno.remove(tmpFile);
+  }
+});
+
+Deno.test("loadConfig - reads context source entries from user config", async () => {
+  const tmpFile = await Deno.makeTempFile({ suffix: ".toml" });
+  try {
+    await Deno.writeTextFile(
+      tmpFile,
+      `
+[[context.sources]]
+path = "/notes/personal.md"
+name = "personal.md"
+
+[[context.sources]]
+path = "/notes/work/**/*.md"
+name = "work"
+`,
+    );
+
+    const config = await loadConfig({ configPath: tmpFile });
+    assertEquals(config.context.sources, [
+      { path: "/notes/personal.md", name: "personal.md" },
+      { path: "/notes/work/**/*.md", name: "work" },
+    ]);
+  } finally {
+    await Deno.remove(tmpFile);
+  }
+});
+
+Deno.test("loadConfig - selects project profile from CLI override", async () => {
+  const tmpFile = await Deno.makeTempFile({ suffix: ".toml" });
+  try {
+    await Deno.writeTextFile(
+      tmpFile,
+      `
+[[vaults]]
+path = "/custom/vault"
+name = "custom"
+
+[[context.sources]]
+path = "/global/source"
+name = "global"
+
+[projects.blog]
+sources = [{ path = "/notes/blog", name = "blog" }]
+`,
+    );
+
+    const config = await loadConfig({
+      configPath: tmpFile,
+      project: "blog",
+    });
+    assertEquals(config.selected_project, "blog");
+    assertEquals(config.vaults, []);
+    assertEquals(config.context.sources, [
+      { path: "/notes/blog", name: "blog" },
+    ]);
+  } finally {
+    await Deno.remove(tmpFile);
+  }
+});
+
+Deno.test("loadConfig - RAGE_PROJECT env var selects project profile", async () => {
+  const tmpFile = await Deno.makeTempFile({ suffix: ".toml" });
+  Deno.env.set("RAGE_PROJECT", "mid");
+  try {
+    await Deno.writeTextFile(
+      tmpFile,
+      `
+[projects.mid]
+sources = [{ path = "/notes/mid", name = "mid" }]
+`,
+    );
+
+    const config = await loadConfig({ configPath: tmpFile });
+    assertEquals(config.selected_project, "mid");
+    assertEquals(config.context.sources, [
+      { path: "/notes/mid", name: "mid" },
+    ]);
+  } finally {
+    Deno.env.delete("RAGE_PROJECT");
+    await Deno.remove(tmpFile);
+  }
+});
+
+Deno.test("loadConfig - throws when selected project is missing", async () => {
+  const tmpFile = await Deno.makeTempFile({ suffix: ".toml" });
+  try {
+    await Deno.writeTextFile(
+      tmpFile,
+      `
+[projects.blog]
+sources = [{ path = "/notes/blog", name = "blog" }]
+`,
+    );
+
+    await assertRejects(
+      () => loadConfig({ configPath: tmpFile, project: "missing" }),
+      Error,
+      `Project "missing" is not configured. Available projects: blog.`,
+    );
   } finally {
     await Deno.remove(tmpFile);
   }
@@ -115,13 +205,13 @@ Deno.test("loadConfig - user config arrays replace defaults (not concatenate)", 
     await Deno.writeTextFile(
       tmpFile,
       `
-[ingest]
+[context]
 extensions = [".md", ".txt"]
 `,
     );
 
     const config = await loadConfig({ configPath: tmpFile });
-    assertEquals(config.ingest.extensions, [".md", ".txt"]);
+    assertEquals(config.context.extensions, [".md", ".txt"]);
   } finally {
     await Deno.remove(tmpFile);
   }
@@ -133,25 +223,23 @@ Deno.test("loadConfig - throws if user config file does not exist", async () => 
   );
 });
 
-Deno.test("loadConfig - default config has registry with expected local models", async () => {
-  const config = await loadConfig({});
-  const localRegistry = config.models.registry.local;
-
-  assertEquals(typeof localRegistry["nomic-embed-text:latest"], "object");
-  assertEquals(
-    localRegistry["nomic-embed-text:latest"].roles.includes("embedding"),
-    true,
-  );
-});
-
 Deno.test("loadConfig - default config has registry with expected cloud models", async () => {
   const config = await loadConfig({});
   const cloudRegistry = config.models.registry.cloud;
 
-  assertEquals(typeof cloudRegistry["minimax-m2.5"], "object");
-  assertEquals(cloudRegistry["minimax-m2.5"].roles.includes("line_edit"), true);
-  assertEquals(typeof cloudRegistry["kimi-k2.5"], "object");
-  assertEquals(cloudRegistry["kimi-k2.5"].roles.includes("developmental"), true);
-  assertEquals(typeof cloudRegistry["glm-5"], "object");
-  assertEquals(cloudRegistry["glm-5"].roles.includes("line_edit"), true);
+  assertEquals(typeof cloudRegistry["gemini-3.5-flash"], "object");
+  assertEquals(
+    cloudRegistry["gemini-3.5-flash"].roles.includes("line_edit"),
+    true,
+  );
+  assertEquals(typeof cloudRegistry["claude-opus-4-8"], "object");
+  assertEquals(
+    cloudRegistry["claude-opus-4-8"].roles.includes("developmental"),
+    true,
+  );
+  assertEquals(typeof cloudRegistry["glm-5.2"], "object");
+  assertEquals(typeof cloudRegistry["kimi-k2.6"], "object");
+  assertEquals(typeof cloudRegistry["minimax-m2.7"], "object");
+  assertEquals(typeof cloudRegistry["gpt-5.5-pro"], "object");
+  assertEquals(cloudRegistry["gpt-5.5-pro"].roles.includes("line_edit"), true);
 });

@@ -1,7 +1,7 @@
 import type { AppConfig, ModelRole } from "./schema.ts";
 
 export type { ModelRole };
-export type ModelProvider = "ollama" | "zen";
+export type ModelProvider = "zen";
 
 export interface ModelEntry {
   tag: string;
@@ -16,7 +16,7 @@ export interface ModelRegistry {
    * Build the runtime availability list by cross-referencing config registry
    * entries against actually installed/available models.
    */
-  initialize(ollamaModels: string[], zenModels: string[]): void;
+  initialize(zenModels: string[]): void;
 
   /** Return all available models for a given role. */
   getAvailable(role: ModelRole): ModelEntry[];
@@ -44,15 +44,6 @@ export interface ModelRegistry {
 export function createModelRegistry(config: AppConfig): ModelRegistry {
   const allEntries = new Map<string, ModelEntry>();
 
-  for (const [tag, entry] of Object.entries(config.models.registry.local)) {
-    allEntries.set(tag, {
-      tag,
-      provider: "ollama",
-      roles: entry.roles as ModelRole[],
-      available: false,
-      notes: entry.notes,
-    });
-  }
   for (const [tag, entry] of Object.entries(config.models.registry.cloud)) {
     allEntries.set(tag, {
       tag,
@@ -67,14 +58,11 @@ export function createModelRegistry(config: AppConfig): ModelRegistry {
   let initialized = false;
 
   return {
-    initialize(ollamaModels: string[], zenModels: string[]): void {
-      const ollamaSet = new Set(ollamaModels);
+    initialize(zenModels: string[]): void {
       const zenSet = new Set(zenModels);
 
       for (const entry of allEntries.values()) {
-        entry.available = entry.provider === "ollama"
-          ? ollamaSet.has(entry.tag)
-          : zenSet.has(entry.tag);
+        entry.available = zenSet.has(entry.tag);
       }
 
       initialized = true;
@@ -99,8 +87,9 @@ export function createModelRegistry(config: AppConfig): ModelRegistry {
 
       let defaultTag: string | undefined;
       if (role === "line_edit") defaultTag = config.models.line_edit.default;
-      else if (role === "developmental") defaultTag = config.models.developmental.default;
-      else if (role === "embedding") defaultTag = config.models.embedding.model;
+      else if (role === "developmental") {
+        defaultTag = config.models.developmental.default;
+      }
 
       if (defaultTag) {
         const found = available.find((e) => e.tag === defaultTag);

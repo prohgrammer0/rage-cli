@@ -1,16 +1,12 @@
 {
   "tasks": {
-    "ingest": "deno run --env-file=.env --allow-read --allow-write --allow-net --allow-env --allow-ffi src/main.ts ingest",
-    "edit": "deno run --env-file=.env --allow-read --allow-write --allow-net --allow-env --allow-ffi src/main.ts edit",
-    "test": "deno test --allow-read --allow-write --allow-net --allow-env --allow-ffi"
+    "edit": "deno run --env-file=.env --allow-read --allow-net --allow-env src/main.ts edit",
+    "test": "deno test --allow-read --allow-write --allow-net --allow-env"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1",
     "@std/cli": "jsr:@std/cli@1",
     "@std/fmt": "jsr:@std/fmt@1",
-    "@std/toml": "jsr:@std/toml@1",
-    "@std/crypto": "jsr:@std/crypto@1",
-    "@std/encoding": "jsr:@std/encoding@1",
-    "@db/sqlite": "jsr:@db/sqlite@0.12"
+    "@std/toml": "jsr:@std/toml@1"
   }
 }

@@ -7,13 +7,19 @@ async function makeRegistry() {
   return createModelRegistry(config);
 }
 
-const LOCAL_MODELS = [
-  "nomic-embed-text:latest",
-];
 const ZEN_MODELS = [
-  "minimax-m2.5",
-  "kimi-k2.5",
-  "glm-5",
+  "gemini-3.5-flash",
+  "gemini-3.1-pro",
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+  "deepseek-v4-pro",
+  "deepseek-v4-flash",
+  "glm-5.2",
+  "kimi-k2.6",
+  "qwen3.6-plus",
+  "minimax-m2.7",
+  "gpt-5.5-pro",
+  "gpt-5.5",
 ];
 
 // --- initialization ---
@@ -25,21 +31,23 @@ Deno.test("ModelRegistry - getAvailable returns empty before initialize", async 
 
 Deno.test("ModelRegistry - initialize marks correct models as available", async () => {
   const reg = await makeRegistry();
-  reg.initialize(LOCAL_MODELS, ZEN_MODELS);
+  reg.initialize(ZEN_MODELS);
 
   const available = reg.getAvailable("line_edit");
   const tags = available.map((e) => e.tag);
-  assertEquals(tags.includes("minimax-m2.5"), true);
-  assertEquals(tags.includes("kimi-k2.5"), true);
-  assertEquals(tags.includes("glm-5"), true);
-  // embedding-only model should not appear in line_edit
-  assertEquals(tags.includes("nomic-embed-text:latest"), false);
+  assertEquals(tags.includes("gemini-3.5-flash"), true);
+  assertEquals(tags.includes("gemini-3.1-pro"), true);
+  assertEquals(tags.includes("claude-opus-4-8"), true);
+  assertEquals(tags.includes("deepseek-v4-pro"), true);
+  assertEquals(tags.includes("glm-5.2"), true);
+  assertEquals(tags.includes("kimi-k2.6"), true);
+  assertEquals(tags.includes("minimax-m2.7"), true);
+  assertEquals(tags.includes("gpt-5.5-pro"), true);
 });
 
 Deno.test("ModelRegistry - unavailable models not in getAvailable", async () => {
   const reg = await makeRegistry();
-  // Only local embedding model installed, no zen models.
-  reg.initialize(LOCAL_MODELS, []);
+  reg.initialize([]);
 
   const available = reg.getAvailable("line_edit");
   assertEquals(available.length, 0);
@@ -49,56 +57,47 @@ Deno.test("ModelRegistry - unavailable models not in getAvailable", async () => 
 
 Deno.test("ModelRegistry - resolve returns config default when available", async () => {
   const reg = await makeRegistry();
-  reg.initialize(LOCAL_MODELS, ZEN_MODELS);
+  reg.initialize(ZEN_MODELS);
 
   const entry = reg.resolve("line_edit");
   assertExists(entry);
-  assertEquals(entry.tag, "minimax-m2.5");
+  assertEquals(entry.tag, "gemini-3.5-flash");
 });
 
 Deno.test("ModelRegistry - resolve returns first available when default not installed", async () => {
   const reg = await makeRegistry();
-  // minimax-m2.5 (the line_edit default) is not in this list.
-  reg.initialize(LOCAL_MODELS, ["kimi-k2.5", "glm-5"]);
+  // gemini-3.5-flash (the line_edit default) is not in this list.
+  reg.initialize(["claude-sonnet-4-6", "gpt-5.5"]);
 
   const entry = reg.resolve("line_edit");
   assertExists(entry);
-  assertEquals(entry.tag, "kimi-k2.5");
+  assertEquals(entry.tag, "claude-sonnet-4-6");
 });
 
 Deno.test("ModelRegistry - resolve returns null when nothing available", async () => {
   const reg = await makeRegistry();
-  reg.initialize([], []);
+  reg.initialize([]);
 
   assertEquals(reg.resolve("line_edit"), null);
-});
-
-Deno.test("ModelRegistry - resolve returns embedding model", async () => {
-  const reg = await makeRegistry();
-  reg.initialize(LOCAL_MODELS, ZEN_MODELS);
-
-  const entry = reg.resolve("embedding");
-  assertExists(entry);
-  assertEquals(entry.tag, "nomic-embed-text:latest");
 });
 
 // --- setActive ---
 
 Deno.test("ModelRegistry - setActive overrides resolve", async () => {
   const reg = await makeRegistry();
-  reg.initialize(LOCAL_MODELS, ZEN_MODELS);
+  reg.initialize(ZEN_MODELS);
 
-  const ok = reg.setActive("line_edit", "kimi-k2.5");
+  const ok = reg.setActive("line_edit", "deepseek-v4-flash");
   assertEquals(ok, true);
 
   const entry = reg.resolve("line_edit");
   assertExists(entry);
-  assertEquals(entry.tag, "kimi-k2.5");
+  assertEquals(entry.tag, "deepseek-v4-flash");
 });
 
 Deno.test("ModelRegistry - setActive returns false for unavailable tag", async () => {
   const reg = await makeRegistry();
-  reg.initialize([], []);
+  reg.initialize([]);
 
   const ok = reg.setActive("line_edit", "nonexistent-model");
   assertEquals(ok, false);
@@ -106,10 +105,9 @@ Deno.test("ModelRegistry - setActive returns false for unavailable tag", async (
 
 Deno.test("ModelRegistry - setActive returns false for wrong role", async () => {
   const reg = await makeRegistry();
-  reg.initialize(LOCAL_MODELS, ZEN_MODELS);
+  reg.initialize(ZEN_MODELS);
 
-  // nomic-embed-text is embedding only, not line_edit.
-  const ok = reg.setActive("line_edit", "nomic-embed-text:latest");
+  const ok = reg.setActive("line_edit", "nonexistent-model");
   assertEquals(ok, false);
 });
 
@@ -117,19 +115,22 @@ Deno.test("ModelRegistry - setActive returns false for wrong role", async () => 
 
 Deno.test("ModelRegistry - getUnavailable returns all uninstalled models", async () => {
   const reg = await makeRegistry();
-  // Only embedding model installed, no zen models.
-  reg.initialize(["nomic-embed-text:latest"], []);
+  reg.initialize([]);
 
   const unavailable = reg.getUnavailable().map((e) => e.tag);
-  assertEquals(unavailable.includes("minimax-m2.5"), true);
-  assertEquals(unavailable.includes("kimi-k2.5"), true);
-  assertEquals(unavailable.includes("glm-5"), true);
-  assertEquals(unavailable.includes("nomic-embed-text:latest"), false);
+  assertEquals(unavailable.includes("gemini-3.5-flash"), true);
+  assertEquals(unavailable.includes("claude-opus-4-8"), true);
+  assertEquals(unavailable.includes("deepseek-v4-pro"), true);
+  assertEquals(unavailable.includes("glm-5.2"), true);
+  assertEquals(unavailable.includes("kimi-k2.6"), true);
+  assertEquals(unavailable.includes("qwen3.6-plus"), true);
+  assertEquals(unavailable.includes("minimax-m2.7"), true);
+  assertEquals(unavailable.includes("gpt-5.5-pro"), true);
 });
 
 Deno.test("ModelRegistry - getUnavailable is empty when all models present", async () => {
   const reg = await makeRegistry();
-  reg.initialize(LOCAL_MODELS, ZEN_MODELS);
+  reg.initialize(ZEN_MODELS);
 
   assertEquals(reg.getUnavailable(), []);
 });

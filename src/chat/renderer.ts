@@ -1,6 +1,5 @@
 import { bold, cyan, gray, green, red, yellow } from "@std/fmt/colors";
 import type { ModelEntry } from "../config/models.ts";
-import type { IngestStats } from "../ingest/pipeline.ts";
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
 export type EditorRole = "line" | "dev";
@@ -8,10 +7,9 @@ export type EditorRole = "line" | "dev";
 export interface StatusState {
   role: EditorRole;
   model: string;
-  vaultPath: string;
-  chunkCount: number;
-  staleFileCount: number;
-  dbPath: string;
+  sourceLabel: string;
+  fileCount: number;
+  contextTokens: number;
 }
 
 export interface RenderOptions {
@@ -23,7 +21,6 @@ export interface Renderer {
   log(level: LogLevel, msg: string): void;
   renderModelList(models: ModelEntry[]): void;
   renderStatus(state: StatusState): void;
-  renderIngestStats(stats: IngestStats): void;
 }
 
 export function createRenderer(options?: Partial<RenderOptions>): Renderer {
@@ -46,11 +43,11 @@ export function createRenderer(options?: Partial<RenderOptions>): Renderer {
   return {
     renderPrompt(role: EditorRole, model: string): string {
       const roleLabel = role === "line" ? "line" : "dev";
-      const shortModel = model.includes("/")
-        ? model.split("/").pop()!
-        : model;
+      const shortModel = model.includes("/") ? model.split("/").pop()! : model;
       if (useColor) {
-        return `${color(cyan, `[${roleLabel} • ${shortModel}]`)} ${color(bold, ">")} `;
+        return `${color(cyan, `[${roleLabel} • ${shortModel}]`)} ${
+          color(bold, ">")
+        } `;
       }
       return `[${roleLabel} • ${shortModel}] > `;
     },
@@ -93,30 +90,15 @@ export function createRenderer(options?: Partial<RenderOptions>): Renderer {
 
     renderStatus(state: StatusState): void {
       const lines = [
-        `Role:         ${state.role === "line" ? "line editor" : "developmental editor"}`,
+        `Role:         ${
+          state.role === "line" ? "line editor" : "developmental editor"
+        }`,
         `Model:        ${state.model}`,
-        `Vault:        ${state.vaultPath}`,
-        `Database:     ${state.dbPath}`,
-        `Chunks:       ${state.chunkCount.toLocaleString()}`,
-        `Stale files:  ${state.staleFileCount > 0
-          ? color(yellow, `${state.staleFileCount} (run /ingest to update)`)
-          : color(green, "0 (up to date)")}`,
+        `Sources:      ${state.sourceLabel}`,
+        `Files:        ${state.fileCount.toLocaleString()}`,
+        `Context:      ${state.contextTokens.toLocaleString()} tokens (approx)`,
       ];
       print("\n" + lines.join("\n") + "\n\n");
-    },
-
-    renderIngestStats(stats: IngestStats): void {
-      print([
-        "",
-        `  Files scanned:   ${stats.filesScanned}`,
-        `  Files processed: ${stats.filesProcessed}`,
-        `  Files skipped:   ${stats.filesSkipped}`,
-        `  Files pruned:    ${stats.filesPruned}`,
-        `  Chunks created:  ${stats.chunksCreated}`,
-        `  Chunks reused:   ${stats.chunksReused}`,
-        `  Chunks pruned:   ${stats.chunksPruned}`,
-        "",
-      ].join("\n") + "\n");
     },
   };
 }

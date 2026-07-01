@@ -4,6 +4,7 @@ import type { AppConfig, VaultEntry } from "./schema.ts";
 export interface CLIOverrides {
   vaultPaths?: string[];
   configPath?: string;
+  project?: string;
   modelLine?: string;
   modelDev?: string;
 }
@@ -49,6 +50,27 @@ function pathsToVaultEntries(paths: string[]): VaultEntry[] {
   return paths.map((p) => ({ path: p.trim(), name: basename(p.trim()) }));
 }
 
+function selectProject(config: AppConfig, projectName: string): AppConfig {
+  const profile = config.projects?.[projectName];
+  if (!profile) {
+    const available = Object.keys(config.projects ?? {}).sort();
+    const suffix = available.length > 0
+      ? ` Available projects: ${available.join(", ")}.`
+      : ` No projects are configured.`;
+    throw new Error(`Project "${projectName}" is not configured.${suffix}`);
+  }
+
+  return {
+    ...config,
+    selected_project: projectName,
+    vaults: [],
+    context: {
+      ...config.context,
+      sources: profile.sources ?? [],
+    },
+  };
+}
+
 /**
  * Load and merge configuration.
  *
@@ -58,14 +80,13 @@ function pathsToVaultEntries(paths: string[]): VaultEntry[] {
  *   3. CLI overrides (vault paths, model tags)
  *   4. Environment variables
  *
- * Vault configuration sources (later overrides earlier):
- *   [[vaults]] entries in config file
+ * Context source configuration:
+ *   --project <name> / RAGE_PROJECT selects [projects.<name>] sources only
+ *   [[context.sources]] entries in config file
+ *   [[vaults]] entries in config file (backward-compatible directory shorthand)
  *   --vault <path> flags (each becomes a VaultEntry, name = basename)
  *   RAGE_VAULT_PATHS=path1,path2  (comma-separated; names = basenames)
  *   RAGE_VAULT_PATH=path          (single vault; backward-compatible)
- *
- * Other environment variables:
- *   RAGE_DB_PATH  → config.database.path
  */
 export async function loadConfig(overrides: CLIOverrides): Promise<AppConfig> {
   // 1. Load bundled default config relative to this module.
@@ -91,6 +112,8 @@ export async function loadConfig(overrides: CLIOverrides): Promise<AppConfig> {
   if (overrides.vaultPaths && overrides.vaultPaths.length > 0) {
     merged = { ...merged, vaults: pathsToVaultEntries(overrides.vaultPaths) };
   }
+
+  let selectedProject = overrides.project?.trim() || undefined;
 
   if (overrides.modelLine) {
     merged = {
@@ -124,12 +147,11 @@ export async function loadConfig(overrides: CLIOverrides): Promise<AppConfig> {
     merged = { ...merged, vaults: pathsToVaultEntries([envVaultPath]) };
   }
 
-  const envDbPath = Deno.env.get("RAGE_DB_PATH");
-  if (envDbPath) {
-    merged = {
-      ...merged,
-      database: { ...merged.database, path: envDbPath },
-    };
+  const envProject = Deno.env.get("RAGE_PROJECT")?.trim();
+  if (envProject) selectedProject = envProject;
+
+  if (selectedProject) {
+    merged = selectProject(merged, selectedProject);
   }
 
   return merged;

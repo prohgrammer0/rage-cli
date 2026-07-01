@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertStringIncludes } from "@std/assert";
 import { createRenderer } from "../../src/chat/renderer.ts";
 import type { ModelEntry } from "../../src/config/models.ts";
 
@@ -41,11 +41,11 @@ Deno.test("Renderer - renderModelList renders model tags", () => {
   const r = makeRenderer();
   const models: ModelEntry[] = [
     {
-      tag: "gemma3:12b",
-      provider: "ollama",
+      tag: "gemini-3.5-flash",
+      provider: "zen",
       roles: ["line_edit"],
       available: true,
-      notes: "Default local.",
+      notes: "Fast line editor.",
     },
   ];
   // We can't easily capture stdout in Deno tests; just verify no throw.
@@ -58,26 +58,10 @@ Deno.test("Renderer - renderStatus does not throw", () => {
   const r = makeRenderer();
   r.renderStatus({
     role: "line",
-    model: "gemma3:12b",
-    vaultPath: "/vault",
-    chunkCount: 42,
-    staleFileCount: 3,
-    dbPath: "./data/rage.db",
-  });
-});
-
-// --- renderIngestStats ---
-
-Deno.test("Renderer - renderIngestStats does not throw", () => {
-  const r = makeRenderer();
-  r.renderIngestStats({
-    filesScanned: 10,
-    filesSkipped: 5,
-    filesProcessed: 5,
-    filesPruned: 1,
-    chunksCreated: 20,
-    chunksReused: 3,
-    chunksPruned: 7,
+    model: "gemini-3.5-flash",
+    sourceLabel: "/notes/a.md, /notes/b.md",
+    fileCount: 42,
+    contextTokens: 12345,
   });
 });
 
