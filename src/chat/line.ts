@@ -1,6 +1,7 @@
 import type { ZenClient } from "../providers/zen.ts";
 import type { Renderer } from "./renderer.ts";
 import type { ProjectContextPack } from "../project/context.ts";
+import type { SessionMessage } from "../sessions/store.ts";
 import { createThinkingDisplay, renderTextStream } from "./stream.ts";
 
 const LINE_SYSTEM_PROMPT =
@@ -23,8 +24,9 @@ export interface LineEditorSession {
     message: string,
     onStart?: () => void,
     signal?: AbortSignal,
-  ): Promise<void>;
+  ): Promise<string | null>;
   resetHistory(): void;
+  restoreHistory(messages: SessionMessage[]): void;
 }
 
 export interface LineEditorConfig {
@@ -46,7 +48,7 @@ export function createLineEditor(
       message: string,
       onStart?: () => void,
       signal?: AbortSignal,
-    ): Promise<void> {
+    ): Promise<string | null> {
       const systemContent = LINE_SYSTEM_PROMPT.replace(
         "{projectContext}",
         config.projectContext.content,
@@ -91,6 +93,7 @@ export function createLineEditor(
         Deno.stdout.writeSync(new TextEncoder().encode("\n\n"));
         history.push({ role: "user", content: message });
         history.push({ role: "assistant", content: fullResponse });
+        return fullResponse;
       } catch (err) {
         await thinking.finish();
         stopSpinner();
@@ -99,7 +102,7 @@ export function createLineEditor(
         }
         if (signal?.aborted) {
           renderer.log("info", "Canceled.");
-          return;
+          return null;
         }
         renderer.log(
           "error",
@@ -107,12 +110,16 @@ export function createLineEditor(
             err instanceof Error ? err.message : String(err)
           }`,
         );
-        return;
+        return null;
       }
     },
 
     resetHistory(): void {
       history = [];
+    },
+
+    restoreHistory(messages: SessionMessage[]): void {
+      history = messages.map((message) => ({ ...message }));
     },
   };
 }

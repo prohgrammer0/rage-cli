@@ -164,3 +164,29 @@ Deno.test("buildProjectContextPack - skips files that exceed token budget", asyn
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("buildProjectContextPack - context hash changes with file content", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${dir}/note.md`, "First");
+    const first = await buildProjectContextPack({
+      sources: [{ path: dir }],
+      vaults: [],
+      extensions: [".md"],
+      maxTokens: 10000,
+    });
+
+    await Deno.writeTextFile(`${dir}/note.md`, "Second");
+    const second = await buildProjectContextPack({
+      sources: [{ path: dir }],
+      vaults: [],
+      extensions: [".md"],
+      maxTokens: 10000,
+    });
+
+    assertEquals(first.contextHash === second.contextHash, false);
+    assertEquals(first.contextHash.length, 64);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

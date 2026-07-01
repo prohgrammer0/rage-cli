@@ -7,6 +7,7 @@ import { createLineEditor } from "./chat/line.ts";
 import { createDevEditor } from "./chat/developmental.ts";
 import { createRenderer } from "./chat/renderer.ts";
 import { runRepl } from "./chat/repl.ts";
+import { createSessionStore } from "./sessions/store.ts";
 
 function usage(): void {
   console.error(`Usage: rage [edit] [options]
@@ -17,6 +18,7 @@ Options:
   --project <name>      Use a named [projects.<name>] source profile
   --model-line <tag>    Model for line editing
   --model-dev <tag>     Model for developmental editing
+  --resume <id>         Resume a saved session
 `);
 }
 
@@ -40,7 +42,7 @@ function sourceLabel(config: Awaited<ReturnType<typeof loadConfig>>): string {
 
 async function main(): Promise<void> {
   const rawArgs = parseArgs(Deno.args, {
-    string: ["config", "project", "model-line", "model-dev"],
+    string: ["config", "project", "model-line", "model-dev", "resume"],
     collect: ["vault"],
     alias: { v: "vault", c: "config" },
     "--": false,
@@ -62,6 +64,26 @@ async function main(): Promise<void> {
 
   const renderer = createRenderer();
   const errors: string[] = [];
+  const parsedResume = rawArgs["resume"] === undefined
+    ? undefined
+    : Number(rawArgs["resume"]);
+  const resumeSessionId = parsedResume !== undefined &&
+      Number.isSafeInteger(parsedResume) &&
+      parsedResume > 0
+    ? parsedResume
+    : undefined;
+
+  if (rawArgs["resume"] !== undefined && resumeSessionId === undefined) {
+    errors.push(`--resume must be a positive session ID.`);
+  }
+
+  if (config.sessions.enabled && !config.sessions.path.trim()) {
+    errors.push(`sessions.path must not be empty when sessions are enabled.`);
+  }
+
+  if (resumeSessionId !== undefined && !config.sessions.enabled) {
+    errors.push(`--resume requires sessions.enabled = true.`);
+  }
 
   if (
     !Number.isFinite(config.context.max_tokens) ||
@@ -168,6 +190,17 @@ async function main(): Promise<void> {
     );
   }
 
+  const sessionStore = errors.length === 0 && config.sessions.enabled
+    ? await createSessionStore(config.sessions.path).catch((err) => {
+      errors.push(
+        `Failed to open session database: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    })
+    : null;
+
   if (errors.length > 0) {
     for (const error of errors) renderer.log("error", error);
     Deno.exit(1);
@@ -214,24 +247,36 @@ async function main(): Promise<void> {
   const sources = sourceLabel(config);
   const projectFilePaths = projectContext!.files.map((file) => file.path);
 
-  await runRepl({
-    initialRole: "line",
-    getFilePaths: () => projectFilePaths,
-    commandContext: {
-      role: "line",
-      modelRegistry: registry,
+  try {
+    await runRepl({
+      initialRole: "line",
+      getFilePaths: () => projectFilePaths,
+      sessionStore,
+      sessionProject: config.selected_project ?? sources,
       sourceLabel: sources,
-      fileCount: projectContext!.files.length,
-      contextTokens: projectContext!.tokenCount,
+      contextHash: projectContext!.contextHash,
+      initialSessionId: resumeSessionId,
+      commandContext: {
+        role: "line",
+        modelRegistry: registry,
+        sourceLabel: sources,
+        fileCount: projectContext!.files.length,
+        contextTokens: projectContext!.tokenCount,
+        renderer,
+        onRoleChange: () => {},
+        onModelChange: () => {},
+        onListSessions: () => {},
+        onResumeSession: () => {},
+        getSessionId: () => null,
+        onQuit: () => {},
+      },
+      lineEditor,
+      devEditor,
       renderer,
-      onRoleChange: () => {},
-      onModelChange: () => {},
-      onQuit: () => {},
-    },
-    lineEditor,
-    devEditor,
-    renderer,
-  });
+    });
+  } finally {
+    sessionStore?.close();
+  }
 }
 
 if (import.meta.main) {

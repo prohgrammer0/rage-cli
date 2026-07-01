@@ -65,6 +65,32 @@ Deno.test("Renderer - renderStatus does not throw", () => {
   });
 });
 
+Deno.test("Renderer - renderSessionList does not throw", () => {
+  const r = makeRenderer();
+  r.renderSessionList([
+    {
+      id: 7,
+      project: "book",
+      sourceLabel: "book: /notes/book",
+      editorRole: "dev",
+      model: "claude-opus-4-8",
+      contextHash: "abc",
+      createdAt: "2026-06-30T12:00:00.000Z",
+      updatedAt: "2026-06-30T12:05:00.000Z",
+      messageCount: 2,
+      preview: "Review the opening chapter.",
+    },
+  ]);
+});
+
+Deno.test("Renderer - renderTranscript does not throw", () => {
+  const r = makeRenderer();
+  r.renderTranscript([
+    { role: "user", content: "Review the opening." },
+    { role: "assistant", content: "The opening lacks a clear focal point." },
+  ]);
+});
+
 // --- log levels ---
 
 Deno.test("Renderer - log does not throw for all levels", () => {

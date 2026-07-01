@@ -61,12 +61,12 @@ Deno.test("ModelRegistry - resolve returns config default when available", async
 
   const entry = reg.resolve("line_edit");
   assertExists(entry);
-  assertEquals(entry.tag, "gemini-3.5-flash");
+  assertEquals(entry.tag, "deepseek-v4-flash");
 });
 
 Deno.test("ModelRegistry - resolve returns first available when default not installed", async () => {
   const reg = await makeRegistry();
-  // gemini-3.5-flash (the line_edit default) is not in this list.
+  // deepseek-v4-flash (the line_edit default) is not in this list.
   reg.initialize(["claude-sonnet-4-6", "gpt-5.5"]);
 
   const entry = reg.resolve("line_edit");
@@ -87,12 +87,12 @@ Deno.test("ModelRegistry - setActive overrides resolve", async () => {
   const reg = await makeRegistry();
   reg.initialize(ZEN_MODELS);
 
-  const ok = reg.setActive("line_edit", "deepseek-v4-flash");
+  const ok = reg.setActive("line_edit", "qwen3.6-plus");
   assertEquals(ok, true);
 
   const entry = reg.resolve("line_edit");
   assertExists(entry);
-  assertEquals(entry.tag, "deepseek-v4-flash");
+  assertEquals(entry.tag, "qwen3.6-plus");
 });
 
 Deno.test("ModelRegistry - setActive returns false for unavailable tag", async () => {

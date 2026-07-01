@@ -13,21 +13,25 @@ extensions = [".md"]
 max_tokens = 180000
 cache = true
 
+[sessions]
+enabled = true
+path = "./data/sessions.db"
+
 # LINE EDITOR: CLOUD
 # Fast long-context model for prose-level critique.
 [models.line_edit]
 provider = "zen"
-default = "gemini-3.5-flash"
+default = "deepseek-v4-flash"
 
 # DEVELOPMENTAL EDITOR: CLOUD
 # Strong long-context model for structural critique.
 [models.developmental]
 provider = "zen"
-default = "claude-opus-4-8"
+default = "deepseek-v4-pro"
 
 [models.registry.cloud."gemini-3.5-flash"]
 roles = ["line_edit", "developmental"]
-notes = "Gemini 3.5 Flash. Fast 1M-context default for line editing."
+notes = "Gemini 3.5 Flash. Fast 1M-context option."
 
 [models.registry.cloud."gemini-3.1-pro"]
 roles = ["line_edit", "developmental"]
@@ -43,11 +47,11 @@ notes = "Claude Sonnet 4.6. Balanced cached 1M-context option."
 
 [models.registry.cloud."deepseek-v4-pro"]
 roles = ["line_edit", "developmental"]
-notes = "DeepSeek V4 Pro. Strong 1M-context OpenAI-compatible model."
+notes = "DeepSeek V4 Pro. Strong open-weight 1M-context default for developmental editing."
 
 [models.registry.cloud."deepseek-v4-flash"]
 roles = ["line_edit", "developmental"]
-notes = "DeepSeek V4 Flash. Fast 1M-context OpenAI-compatible model."
+notes = "DeepSeek V4 Flash. Fast, economical open-weight 1M-context default for line editing."
 
 [models.registry.cloud."glm-5.2"]
 roles = ["line_edit", "developmental"]

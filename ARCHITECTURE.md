@@ -15,20 +15,23 @@ src/main.ts
 ├── src/config/models.ts        (imports: schema.ts)
 ├── src/providers/zen.ts        (no internal imports)
 ├── src/project/context.ts      (imports: config/schema.ts types)
+├── src/sessions/store.ts       (no internal imports)
 └── src/chat/
     ├── history.ts              (no internal imports)
     ├── input.ts                (imports: history.ts)
-    ├── renderer.ts             (imports: config/models.ts)
+    ├── renderer.ts             (imports: config/models.ts, sessions/store.ts types)
     ├── stream.ts               (no internal imports)
     ├── commands.ts             (imports: renderer.ts, config/models.ts)
-    ├── line.ts                 (imports: providers/zen.ts, project/context.ts types, renderer.ts, stream.ts)
-    ├── developmental.ts        (imports: providers/zen.ts, project/context.ts types, renderer.ts, stream.ts)
-    └── repl.ts                 (imports: renderer.ts, commands.ts, line.ts, developmental.ts, input.ts)
+    ├── line.ts                 (imports: providers/zen.ts, project/context.ts types, sessions/store.ts types, renderer.ts, stream.ts)
+    ├── developmental.ts        (imports: providers/zen.ts, project/context.ts types, sessions/store.ts types, renderer.ts, stream.ts)
+    └── repl.ts                 (imports: renderer.ts, commands.ts, line.ts, developmental.ts, input.ts, sessions/store.ts)
 ```
 
 **Rules:**
 
-- No RAG, embeddings, vector DB, SQLite, or local chat mode.
+- No RAG, embeddings, vector DB, or local chat mode.
+- SQLite is used only for durable session metadata and messages. Project content
+  never enters SQLite.
 - `schema.ts` has zero imports from this codebase.
 - Provider modules do not import from config, project, or chat.
 - Chat modules do not read files directly; they receive a prebuilt project
@@ -64,6 +67,11 @@ export interface ContextConfig {
   cache: boolean;
 }
 
+export interface SessionsConfig {
+  enabled: boolean;
+  path: string;
+}
+
 export interface RoleModelConfig {
   provider: "zen";
   default: string;
@@ -92,6 +100,7 @@ export interface AppConfig {
   projects: Record<string, ProjectProfileConfig>;
   vaults: VaultEntry[];
   context: ContextConfig;
+  sessions: SessionsConfig;
   models: ModelsConfig;
   zen: ZenConfig;
 }
@@ -204,6 +213,7 @@ export interface ProjectContextFile {
 export interface ProjectContextPack {
   content: string;
   tokenCount: number;
+  contextHash: string;
   files: ProjectContextFile[];
   filesSkipped: number;
 }
@@ -238,6 +248,60 @@ Project context pack rules:
 - Format each file with a path header and 1-indexed line numbers.
 - Never include timestamps or query-specific text.
 - Stop before `maxTokens`; skipped files are counted and reported.
+- Hash the final content with SHA-256 for session-resume change detection.
+
+---
+
+### `src/sessions/store.ts`
+
+```typescript
+export type SessionEditorRole = "line" | "dev";
+export type SessionMessageRole = "user" | "assistant";
+
+export interface SessionMessage {
+  role: SessionMessageRole;
+  content: string;
+}
+
+export interface SessionRecord {
+  id: number;
+  project: string;
+  sourceLabel: string;
+  editorRole: SessionEditorRole;
+  model: string;
+  contextHash: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: SessionMessage[];
+}
+
+export interface SessionSummary extends Omit<SessionRecord, "messages"> {
+  messageCount: number;
+  preview: string;
+}
+
+export interface SessionStore {
+  create(input: {
+    project: string;
+    sourceLabel: string;
+    editorRole: SessionEditorRole;
+    model: string;
+    contextHash: string;
+  }): SessionRecord;
+  appendTurn(sessionId: number, user: string, assistant: string): void;
+  get(sessionId: number): SessionRecord | null;
+  list(project?: string, limit?: number): SessionSummary[];
+  close(): void;
+}
+
+export function createSessionStore(path: string): Promise<SessionStore>;
+```
+
+The session database stores normalized session metadata and user/assistant text
+only. It never stores project files, project context packs, API keys, thinking
+summaries, embeddings, or retrieval data. Writes are transactional. The schema
+is initialized and versioned by `createSessionStore`; databases newer than the
+supported schema version are rejected rather than modified.
 
 ---
 
@@ -253,6 +317,11 @@ export interface InputOptions {
 export type InputResult =
   | { type: "submit"; text: string }
   | { type: "abort" };
+
+export function getGhost(
+  lines: string[],
+  filePaths: string[],
+): string;
 
 export async function readMultilineInput(
   options?: InputOptions,
@@ -283,6 +352,7 @@ export interface StatusState {
   sourceLabel: string;
   fileCount: number;
   contextTokens: number;
+  sessionId?: number;
 }
 
 export interface Renderer {
@@ -290,6 +360,8 @@ export interface Renderer {
   log(level: LogLevel, msg: string): void;
   renderModelList(models: ModelEntry[]): void;
   renderStatus(state: StatusState): void;
+  renderSessionList(sessions: SessionSummary[]): void;
+  renderTranscript(messages: SessionMessage[]): void;
 }
 
 export function createRenderer(options?: Partial<RenderOptions>): Renderer;
@@ -309,6 +381,9 @@ export interface CommandContext {
   renderer: Renderer;
   onRoleChange: (role: EditorRole) => void;
   onModelChange: (tag: string) => void;
+  onListSessions: () => void;
+  onResumeSession: (id: number) => void;
+  getSessionId: () => number | null;
   onQuit: () => void;
 }
 
@@ -328,6 +403,8 @@ Commands:
 - `/role <line|dev>`
 - `/model [<tag>]`
 - `/status`
+- `/sessions`
+- `/resume <id>`
 - `/help`
 - `/quit` or `/exit`
 
@@ -341,8 +418,9 @@ export interface LineEditorSession {
     message: string,
     onStart?: () => void,
     signal?: AbortSignal,
-  ): Promise<void>;
+  ): Promise<string | null>;
   resetHistory(): void;
+  restoreHistory(messages: SessionMessage[]): void;
 }
 
 export interface LineEditorConfig {
@@ -368,8 +446,9 @@ export interface DevEditorSession {
     message: string,
     onStart?: () => void,
     signal?: AbortSignal,
-  ): Promise<void>;
+  ): Promise<string | null>;
   resetHistory(): void;
+  restoreHistory(messages: SessionMessage[]): void;
 }
 
 export interface DevEditorConfig {
@@ -397,6 +476,11 @@ export interface ReplConfig {
   devEditor: DevEditorSession;
   renderer: Renderer;
   getFilePaths: () => string[];
+  sessionStore: SessionStore | null;
+  sessionProject: string;
+  sourceLabel: string;
+  contextHash: string;
+  initialSessionId?: number;
 }
 
 export function runRepl(config: ReplConfig): Promise<void>;
@@ -416,8 +500,10 @@ Ctrl+C force-exits if cancellation has not completed.
 | `context.extensions`           | `[".md"]`                    |
 | `context.max_tokens`           | `180000`                     |
 | `context.cache`                | `true`                       |
-| `models.line_edit.default`     | `gemini-3.5-flash`           |
-| `models.developmental.default` | `claude-opus-4-8`            |
+| `sessions.enabled`             | `true`                       |
+| `sessions.path`                | `"./data/sessions.db"`       |
+| `models.line_edit.default`     | `deepseek-v4-flash`          |
+| `models.developmental.default` | `deepseek-v4-pro`            |
 | `zen.api_key_env`              | `RAGE_ZEN_API_KEY`           |
 | `zen.base_url`                 | `https://opencode.ai/zen/v1` |
 
@@ -474,9 +560,14 @@ Project context:
 1. Load config and resolve project context sources.
 2. Fetch Zen model catalog and initialize the model registry.
 3. Build a deterministic project context pack from configured files.
-4. Start the REPL with file-path completions from the context pack.
-5. Each editor request sends the stable system prompt plus conversation history
+4. Open the session database when session persistence is enabled.
+5. Start the REPL with file-path completions from the context pack and
+   optionally restore `--resume <id>`.
+6. Each editor request sends the stable system prompt plus conversation history
    and the current user message to Zen.
+7. Each successful user/assistant turn is committed to SQLite. Role or model
+   changes start a new logical session. Resuming compares the stored context
+   hash to the current project context and warns when they differ.
 
 For Claude/Qwen models, Zen requests use `/messages` with cache control on the
 system prompt when `context.cache = true`.

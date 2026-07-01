@@ -150,6 +150,14 @@ export async function loadConfig(overrides: CLIOverrides): Promise<AppConfig> {
   const envProject = Deno.env.get("RAGE_PROJECT")?.trim();
   if (envProject) selectedProject = envProject;
 
+  const envSessionDbPath = Deno.env.get("RAGE_SESSION_DB_PATH")?.trim();
+  if (envSessionDbPath) {
+    merged = {
+      ...merged,
+      sessions: { ...merged.sessions, path: envSessionDbPath },
+    };
+  }
+
   if (selectedProject) {
     merged = selectProject(merged, selectedProject);
   }

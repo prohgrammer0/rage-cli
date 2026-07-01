@@ -10,8 +10,10 @@ Deno.test("loadConfig - loads default config without user overrides", async () =
   assertEquals(config.context.extensions, [".md"]);
   assertEquals(config.context.max_tokens, 180000);
   assertEquals(config.context.cache, true);
-  assertEquals(config.models.line_edit.default, "gemini-3.5-flash");
-  assertEquals(config.models.developmental.default, "claude-opus-4-8");
+  assertEquals(config.sessions.enabled, true);
+  assertEquals(config.sessions.path, "./data/sessions.db");
+  assertEquals(config.models.line_edit.default, "deepseek-v4-flash");
+  assertEquals(config.models.developmental.default, "deepseek-v4-pro");
   assertEquals(config.zen.api_key_env, "RAGE_ZEN_API_KEY");
   assertEquals(config.zen.base_url, "https://opencode.ai/zen/v1");
 });
@@ -90,7 +92,7 @@ max_tokens = 256
     assertEquals(config.context.max_tokens, 256);
     // Unchanged fields still come from defaults.
     assertEquals(config.context.cache, true);
-    assertEquals(config.models.line_edit.default, "gemini-3.5-flash");
+    assertEquals(config.models.line_edit.default, "deepseek-v4-flash");
   } finally {
     await Deno.remove(tmpFile);
   }
@@ -175,6 +177,16 @@ sources = [{ path = "/notes/mid", name = "mid" }]
   } finally {
     Deno.env.delete("RAGE_PROJECT");
     await Deno.remove(tmpFile);
+  }
+});
+
+Deno.test("loadConfig - RAGE_SESSION_DB_PATH overrides session path", async () => {
+  Deno.env.set("RAGE_SESSION_DB_PATH", "/tmp/rage-sessions.db");
+  try {
+    const config = await loadConfig({});
+    assertEquals(config.sessions.path, "/tmp/rage-sessions.db");
+  } finally {
+    Deno.env.delete("RAGE_SESSION_DB_PATH");
   }
 });
 

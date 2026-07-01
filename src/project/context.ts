@@ -8,6 +8,7 @@ export interface ProjectContextFile {
 export interface ProjectContextPack {
   content: string;
   tokenCount: number;
+  contextHash: string;
   files: ProjectContextFile[];
   filesSkipped: number;
 }
@@ -62,9 +63,11 @@ export async function buildProjectContextPack(
   content += footer;
   tokenCount = estimateTokens(content);
 
+  const finalContent = included.length === 0 ? "" : content;
   return {
-    content: included.length === 0 ? "" : content,
+    content: finalContent,
     tokenCount: included.length === 0 ? 0 : tokenCount,
+    contextHash: await hashText(finalContent),
     files: included,
     filesSkipped,
   };
@@ -359,4 +362,14 @@ function escapeAttribute(value: string): string {
 export function estimateTokens(text: string): number {
   if (text.length === 0) return 0;
   return Math.ceil(text.length / 4);
+}
+
+async function hashText(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }

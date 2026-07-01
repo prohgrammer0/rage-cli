@@ -32,6 +32,11 @@ export interface ContextConfig {
   cache: boolean;
 }
 
+export interface SessionsConfig {
+  enabled: boolean;
+  path: string;
+}
+
 export interface RoleModelConfig {
   provider: "zen";
   default: string;
@@ -60,6 +65,7 @@ export interface AppConfig {
   projects: Record<string, ProjectProfileConfig>;
   vaults: VaultEntry[];
   context: ContextConfig;
+  sessions: SessionsConfig;
   models: ModelsConfig;
   zen: ZenConfig;
 }

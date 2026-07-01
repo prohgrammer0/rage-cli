@@ -19,6 +19,8 @@ const COMMANDS = [
   "/quit",
   "/role",
   "/status",
+  "/resume",
+  "/sessions",
 ];
 
 const ROLE_ARGS = ["dev", "line"];
@@ -29,7 +31,7 @@ const ROLE_ARGS = ["dev", "line"];
  * @-path completion works on the last line of multi-line input.
  * /command completion only works on single-line input.
  */
-function getGhost(lines: string[], filePaths: string[]): string {
+export function getGhost(lines: string[], filePaths: string[]): string {
   const lastLine = lines[lines.length - 1];
 
   // @-path completion: complete the partial path after the last "@" on the current line.

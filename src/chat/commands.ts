@@ -10,6 +10,9 @@ export interface CommandContext {
   renderer: Renderer;
   onRoleChange: (role: EditorRole) => void;
   onModelChange: (tag: string) => void;
+  onListSessions: () => void;
+  onResumeSession: (id: number) => void;
+  getSessionId: () => number | null;
   onQuit: () => void;
 }
 
@@ -75,7 +78,23 @@ export function handleCommand(
         sourceLabel: ctx.sourceLabel,
         fileCount: ctx.fileCount,
         contextTokens: ctx.contextTokens,
+        sessionId: ctx.getSessionId() ?? undefined,
       });
+      return { type: "ok" };
+    }
+
+    case "/sessions": {
+      ctx.onListSessions();
+      return { type: "ok" };
+    }
+
+    case "/resume": {
+      const id = Number(args[0]);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        ctx.renderer.log("error", "Usage: /resume <session-id>");
+        return { type: "ok" };
+      }
+      ctx.onResumeSession(id);
       return { type: "ok" };
     }
 
@@ -84,6 +103,8 @@ export function handleCommand(
         "",
         "  /role <line|dev>      Switch editor role (resets conversation)",
         "  /model [<tag>]        Switch model or list available models",
+        "  /sessions             List saved sessions for this project",
+        "  /resume <id>          Continue a saved session",
         "  /status               Show current state",
         "  /help                 Show this help",
         "  /quit                 Exit",

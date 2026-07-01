@@ -24,6 +24,8 @@ async function makeCtx(): Promise<{
   ctx: CommandContext;
   roleChanges: string[];
   modelChanges: string[];
+  listedSessions: number[];
+  resumedSessions: number[];
   quits: number;
 }> {
   const config = await loadConfig({});
@@ -32,6 +34,8 @@ async function makeCtx(): Promise<{
 
   const roleChanges: string[] = [];
   const modelChanges: string[] = [];
+  const listedSessions: number[] = [];
+  const resumedSessions: number[] = [];
   let quits = 0;
 
   const ctx: CommandContext = {
@@ -43,10 +47,20 @@ async function makeCtx(): Promise<{
     renderer: createRenderer({ useColor: false }),
     onRoleChange: (r) => roleChanges.push(r),
     onModelChange: (m) => modelChanges.push(m),
+    onListSessions: () => listedSessions.push(1),
+    onResumeSession: (id) => resumedSessions.push(id),
+    getSessionId: () => 42,
     onQuit: () => quits++,
   };
 
-  return { ctx, roleChanges, modelChanges, quits };
+  return {
+    ctx,
+    roleChanges,
+    modelChanges,
+    listedSessions,
+    resumedSessions,
+    quits,
+  };
 }
 
 // --- /role ---
@@ -100,6 +114,27 @@ Deno.test("Commands - /help returns ok", async () => {
   const { ctx } = await makeCtx();
   const result = await handleCommand("/help", ctx);
   assertEquals(result.type, "ok");
+});
+
+Deno.test("Commands - /sessions lists saved sessions", async () => {
+  const { ctx, listedSessions } = await makeCtx();
+  const result = await handleCommand("/sessions", ctx);
+  assertEquals(result.type, "ok");
+  assertEquals(listedSessions, [1]);
+});
+
+Deno.test("Commands - /resume forwards a valid session ID", async () => {
+  const { ctx, resumedSessions } = await makeCtx();
+  const result = await handleCommand("/resume 17", ctx);
+  assertEquals(result.type, "ok");
+  assertEquals(resumedSessions, [17]);
+});
+
+Deno.test("Commands - /resume rejects an invalid session ID", async () => {
+  const { ctx, resumedSessions } = await makeCtx();
+  const result = await handleCommand("/resume nope", ctx);
+  assertEquals(result.type, "ok");
+  assertEquals(resumedSessions, []);
 });
 
 // --- /quit ---

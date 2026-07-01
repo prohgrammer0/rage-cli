@@ -11,7 +11,9 @@ chat interface: line-level and developmental. It never writes a word for you.
 ## How It Works
 
 RAGE uses full-project context, not RAG. There are no embeddings, chunks,
-retrieval queries, vector database, SQLite database, or local inference service.
+retrieval queries, vector database, or local inference service. SQLite stores
+chat session metadata and messages only; it is never used to index or retrieve
+project files.
 
 At startup, RAGE:
 
@@ -48,7 +50,8 @@ the writing.
 
 ## Stack
 
-Deno and OpenCode Zen for cloud inference.
+Deno, its built-in SQLite support for session history, and OpenCode Zen for
+cloud inference.
 
 ## Requirements
 
@@ -76,6 +79,10 @@ Use absolute paths. Do not rely on `~` expansion inside config files.
 extensions = [".md"]
 max_tokens = 180000
 cache = true
+
+[sessions]
+enabled = true
+path = "./data/sessions.db"
 
 [projects.blog]
 sources = [{ path = "/Users/you/notes/blog", name = "blog" }]
@@ -123,7 +130,7 @@ RAGE_ZEN_API_KEY=sk-... deno task edit --vault "/Users/you/Obsidian Vault"
 
 ```bash
 deno compile \
-  --allow-read --allow-net --allow-env \
+  --allow-read --allow-write --allow-net --allow-env \
   --output rage \
   src/main.ts
 ```
@@ -151,9 +158,11 @@ The default registry contains the Zen models enabled for this project:
 - Qwen3.6 Plus
 - MiniMax M2.7
 
-Gemini 3.5 Flash is the default line editor. Claude Opus 4.8 is the default
-developmental editor. RAGE checks Zen's live model catalog at startup and only
-offers models available to the current API key.
+DeepSeek V4 Flash is the default line editor. DeepSeek V4 Pro is the default
+developmental editor. This pairing keeps routine line critique inexpensive while
+reserving the stronger open-weight model for project-level reasoning. RAGE
+checks Zen's live model catalog at startup and only offers models available to
+the current API key.
 
 When a provider exposes thinking or a reasoning summary, RAGE shows the complete
 text in a dimmed block before the answer. Provider bursts are paced into small
@@ -169,10 +178,16 @@ history.
 /role dev           Switch to developmental editor
 /model              List available models for current role
 /model <tag>        Switch model (resets conversation)
+/sessions           List saved sessions for the selected project
+/resume <id>        Restore and continue a saved session
 /status             Show current state
 /help               List commands
 /quit               Exit
 ```
+
+Slash commands show dimmed ghost completion as you type. For example, `/res`
+completes to `/resume` and `/se` completes to `/sessions`. Press Tab or → to
+accept the suggestion.
 
 ## @-Path Completion
 
@@ -207,19 +222,21 @@ prefixed with the vault name for multiple vaults:
 - **Backspace** — delete character; at start of line, merges with previous line
 - **Ctrl+C** — cancel an active response; press again to force-exit
 - **↑** or **↓** — navigate prompts entered during the current session
-- **Tab** or **→** — accept ghost completion (for `/commands` and `@paths`)
+- **Tab** or **→** — accept ghost completion for slash commands, `/role`
+  arguments, and `@paths`
 
 ## Configuration
 
 RAGE loads `config.default.toml` as the base config. Override with
 `--config <path>` or environment variables:
 
-| Variable           | Purpose                                         |
-| ------------------ | ----------------------------------------------- |
-| `RAGE_VAULT_PATH`  | Single vault path (backward compatible)         |
-| `RAGE_VAULT_PATHS` | Comma-separated vault paths for multiple vaults |
-| `RAGE_PROJECT`     | Named `[projects.<name>]` source profile        |
-| `RAGE_ZEN_API_KEY` | API key for OpenCode Zen                        |
+| Variable               | Purpose                                         |
+| ---------------------- | ----------------------------------------------- |
+| `RAGE_VAULT_PATH`      | Single vault path (backward compatible)         |
+| `RAGE_VAULT_PATHS`     | Comma-separated vault paths for multiple vaults |
+| `RAGE_PROJECT`         | Named `[projects.<name>]` source profile        |
+| `RAGE_ZEN_API_KEY`     | API key for OpenCode Zen                        |
+| `RAGE_SESSION_DB_PATH` | Override the SQLite session database path       |
 
 CLI flags are also supported:
 
@@ -229,6 +246,7 @@ CLI flags are also supported:
 --project <name>      Use a named [projects.<name>] source profile
 --model-line <tag>    Model for line editing
 --model-dev <tag>     Model for developmental editing
+--resume <id>         Resume a saved session
 ```
 
 ### Context
@@ -262,6 +280,34 @@ Increase `max_tokens` or narrow the selected project's sources when it appears.
 Directory sources include every matching file. If a directory contains a
 generated aggregate of its source files, either exclude the aggregate from the
 source set or load it alone; including both duplicates context.
+
+### Sessions
+
+Successful user/assistant turns are saved by default:
+
+```toml
+[sessions]
+enabled = true
+path = "./data/sessions.db"
+```
+
+Use `/sessions` to list sessions for the selected project and `/resume <id>` to
+restore one. A resumed transcript is shown in the terminal and supplied to the
+model as conversation history. You can also resume directly at startup:
+
+```bash
+deno task edit --config config.toml --project blog --resume 12
+```
+
+RAGE stores the project name, source label, editor role, model, context hash,
+and user/assistant messages. It does not store project files, the assembled
+project context, API keys, provider thinking, embeddings, or retrieval data.
+Project context is rebuilt from disk on every launch. If it differs from the
+context used when a session was created, RAGE warns and continues with the
+current files.
+
+Changing the editor role or model starts a new logical session. Set
+`sessions.enabled = false` to disable persistence.
 
 ### Project profiles
 

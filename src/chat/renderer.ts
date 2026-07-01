@@ -1,5 +1,6 @@
 import { bold, cyan, gray, green, red, yellow } from "@std/fmt/colors";
 import type { ModelEntry } from "../config/models.ts";
+import type { SessionMessage, SessionSummary } from "../sessions/store.ts";
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
 export type EditorRole = "line" | "dev";
@@ -10,6 +11,7 @@ export interface StatusState {
   sourceLabel: string;
   fileCount: number;
   contextTokens: number;
+  sessionId?: number;
 }
 
 export interface RenderOptions {
@@ -21,6 +23,8 @@ export interface Renderer {
   log(level: LogLevel, msg: string): void;
   renderModelList(models: ModelEntry[]): void;
   renderStatus(state: StatusState): void;
+  renderSessionList(sessions: SessionSummary[]): void;
+  renderTranscript(messages: SessionMessage[]): void;
 }
 
 export function createRenderer(options?: Partial<RenderOptions>): Renderer {
@@ -97,8 +101,43 @@ export function createRenderer(options?: Partial<RenderOptions>): Renderer {
         `Sources:      ${state.sourceLabel}`,
         `Files:        ${state.fileCount.toLocaleString()}`,
         `Context:      ${state.contextTokens.toLocaleString()} tokens (approx)`,
+        `Session:      ${state.sessionId ?? "(new)"}`,
       ];
       print("\n" + lines.join("\n") + "\n\n");
+    },
+
+    renderSessionList(sessions: SessionSummary[]): void {
+      if (sessions.length === 0) {
+        print("No saved sessions for this project.\n");
+        return;
+      }
+
+      print("\n");
+      for (const session of sessions) {
+        const date = session.updatedAt.replace("T", " ").slice(0, 16);
+        const preview = session.preview.replace(/\s+/g, " ").trim();
+        const clipped = preview.length > 72
+          ? `${preview.slice(0, 71)}…`
+          : preview;
+        print(
+          `  ${color(cyan, String(session.id).padStart(4))}  ${date}  ${
+            session.editorRole.padEnd(4)
+          }  ${session.model}  ${color(gray, clipped)}\n`,
+        );
+      }
+      print("\nUse /resume <id> to continue a session.\n\n");
+    },
+
+    renderTranscript(messages: SessionMessage[]): void {
+      if (messages.length === 0) return;
+
+      print("\n");
+      for (const message of messages) {
+        const label = message.role === "user"
+          ? color(cyan, "you")
+          : color(green, "assistant");
+        print(`${label}\n${message.content.trimEnd()}\n\n`);
+      }
     },
   };
 }
