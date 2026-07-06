@@ -1,3 +1,11 @@
+/** Normalized across protocols: inputTokens excludes cache reads/writes. */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 export interface ZenClient {
   /**
    * Fetch available model IDs from the Zen model catalog.
@@ -7,7 +15,8 @@ export interface ZenClient {
 
   /**
    * Stream or return a chat response using the endpoint required by the model
-   * family.
+   * family. onUsage may fire multiple times with cumulative totals; the last
+   * call wins. It never fires if the provider sends no usage.
    */
   chat(params: {
     model: string;
@@ -17,6 +26,7 @@ export interface ZenClient {
     cacheSystemPrompt?: boolean;
     signal?: AbortSignal;
     onThinking?: (text: string) => void;
+    onUsage?: (usage: TokenUsage) => void;
   }): AsyncIterable<string>;
 }
 
@@ -84,6 +94,7 @@ async function* chatCompletions(
       model: params.model,
       messages: params.messages,
       stream: params.stream,
+      ...(params.stream ? { stream_options: { include_usage: true } } : {}),
     }),
   });
 
@@ -91,6 +102,25 @@ async function* chatCompletions(
     const body = await res.text();
     throw new Error(`Zen chat failed (${res.status}): ${body}`);
   }
+
+  type CompletionsUsage = {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+    prompt_cache_hit_tokens?: number;
+  };
+
+  const emitUsage = (usage: CompletionsUsage | undefined): void => {
+    if (!usage) return;
+    const cached = usage.prompt_tokens_details?.cached_tokens ??
+      usage.prompt_cache_hit_tokens ?? 0;
+    params.onUsage?.({
+      inputTokens: Math.max(0, (usage.prompt_tokens ?? 0) - cached),
+      outputTokens: usage.completion_tokens ?? 0,
+      cacheReadTokens: cached,
+      cacheWriteTokens: 0,
+    });
+  };
 
   if (!params.stream) {
     const data = await res.json() as {
@@ -101,10 +131,12 @@ async function* chatCompletions(
           reasoning?: string;
         };
       }>;
+      usage?: CompletionsUsage;
     };
     const message = data.choices[0]?.message;
     const thinking = message?.reasoning_content ?? message?.reasoning;
     if (thinking) params.onThinking?.(thinking);
+    emitUsage(data.usage);
     yield message?.content ?? "";
     return;
   }
@@ -121,15 +153,16 @@ async function* chatCompletions(
         };
         finish_reason?: string | null;
       }>;
+      usage?: CompletionsUsage;
     };
 
+    emitUsage(obj.usage);
     const delta = obj.choices?.[0]?.delta;
     const thinking = delta?.reasoning_content ?? delta?.reasoning;
     if (thinking) params.onThinking?.(thinking);
-    return {
-      text: delta?.content,
-      done: obj.choices?.[0]?.finish_reason === "stop",
-    };
+    // Don't stop at finish_reason: with include_usage the final usage-bearing
+    // chunk arrives after it. [DONE] terminates the stream.
+    return { text: delta?.content };
   });
 }
 
@@ -183,6 +216,30 @@ async function* chatMessages(
     throw new Error(`Zen messages failed (${res.status}): ${body}`);
   }
 
+  type MessagesUsage = {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+
+  const usageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  };
+  const emitUsage = (usage: MessagesUsage | undefined): void => {
+    if (!usage) return;
+    usageTotals.inputTokens = usage.input_tokens ?? usageTotals.inputTokens;
+    usageTotals.outputTokens = usage.output_tokens ?? usageTotals.outputTokens;
+    usageTotals.cacheReadTokens = usage.cache_read_input_tokens ??
+      usageTotals.cacheReadTokens;
+    usageTotals.cacheWriteTokens = usage.cache_creation_input_tokens ??
+      usageTotals.cacheWriteTokens;
+    params.onUsage?.({ ...usageTotals });
+  };
+
   if (!params.stream) {
     const data = await res.json() as {
       content?: Array<{
@@ -190,12 +247,14 @@ async function* chatMessages(
         text?: string;
         thinking?: string;
       }>;
+      usage?: MessagesUsage;
     };
     for (const block of data.content ?? []) {
       if (block.type === "thinking" && block.thinking) {
         params.onThinking?.(block.thinking);
       }
     }
+    emitUsage(data.usage);
     yield data.content
       ?.filter((block) => block.type === "text")
       .map((block) => block.text ?? "")
@@ -209,8 +268,14 @@ async function* chatMessages(
     const obj = JSON.parse(payload) as {
       type?: string;
       delta?: { type?: string; text?: string; thinking?: string };
+      message?: { usage?: MessagesUsage };
+      usage?: MessagesUsage;
     };
 
+    // message_start carries input-side usage; message_delta carries the
+    // cumulative output count.
+    if (obj.type === "message_start") emitUsage(obj.message?.usage);
+    if (obj.type === "message_delta") emitUsage(obj.usage);
     if (obj.type === "message_stop") return { done: true };
     if (
       obj.type === "content_block_delta" &&
@@ -263,6 +328,23 @@ async function* chatResponses(
     throw new Error(`Zen responses failed (${res.status}): ${responseBody}`);
   }
 
+  type ResponsesUsage = {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number };
+  };
+
+  const emitUsage = (usage: ResponsesUsage | undefined): void => {
+    if (!usage) return;
+    const cached = usage.input_tokens_details?.cached_tokens ?? 0;
+    params.onUsage?.({
+      inputTokens: Math.max(0, (usage.input_tokens ?? 0) - cached),
+      outputTokens: usage.output_tokens ?? 0,
+      cacheReadTokens: cached,
+      cacheWriteTokens: 0,
+    });
+  };
+
   if (!params.stream) {
     const data = await res.json() as {
       output_text?: string;
@@ -271,7 +353,9 @@ async function* chatResponses(
         summary?: Array<{ type?: string; text?: string }>;
         content?: Array<{ type?: string; text?: string }>;
       }>;
+      usage?: ResponsesUsage;
     };
+    emitUsage(data.usage);
     const thinking = data.output
       ?.filter((item) => item.type === "reasoning")
       .flatMap((item) => item.summary ?? [])
@@ -293,8 +377,12 @@ async function* chatResponses(
     const obj = JSON.parse(payload) as {
       type?: string;
       delta?: string;
+      response?: { usage?: ResponsesUsage };
     };
-    if (obj.type === "response.completed") return { done: true };
+    if (obj.type === "response.completed") {
+      emitUsage(obj.response?.usage);
+      return { done: true };
+    }
     if (obj.type === "response.reasoning_summary_text.delta") {
       if (obj.delta) params.onThinking?.(obj.delta);
       return {};
@@ -362,6 +450,26 @@ async function* chatGemini(
       content?: { parts?: Array<{ text?: string; thought?: boolean }> };
       finishReason?: string;
     }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+      thoughtsTokenCount?: number;
+      cachedContentTokenCount?: number;
+    };
+  };
+
+  // usageMetadata is cumulative across stream chunks; each emit supersedes.
+  const emitUsage = (data: GeminiResponse): void => {
+    const usage = data.usageMetadata;
+    if (!usage) return;
+    const cached = usage.cachedContentTokenCount ?? 0;
+    params.onUsage?.({
+      inputTokens: Math.max(0, (usage.promptTokenCount ?? 0) - cached),
+      outputTokens: (usage.candidatesTokenCount ?? 0) +
+        (usage.thoughtsTokenCount ?? 0),
+      cacheReadTokens: cached,
+      cacheWriteTokens: 0,
+    });
   };
 
   const extractText = (data: GeminiResponse): string => {
@@ -380,7 +488,9 @@ async function* chatGemini(
   };
 
   if (!params.stream) {
-    yield extractText(await res.json() as GeminiResponse);
+    const data = await res.json() as GeminiResponse;
+    emitUsage(data);
+    yield extractText(data);
     return;
   }
 
@@ -388,6 +498,7 @@ async function* chatGemini(
     if (payload === "[DONE]") return { done: true };
 
     const data = JSON.parse(payload) as GeminiResponse;
+    emitUsage(data);
     return {
       text: extractText(data),
       done: data.candidates?.some((candidate) => candidate.finishReason) ??

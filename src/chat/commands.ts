@@ -12,6 +12,7 @@ export interface CommandContext {
   onModelChange: (tag: string) => void;
   onListSessions: () => void;
   onResumeSession: (id: number) => void;
+  onReloadContext: (target?: string) => Promise<void>;
   getSessionId: () => number | null;
   onQuit: () => void;
 }
@@ -21,10 +22,10 @@ export type CommandResult =
   | { type: "unknown"; input: string }
   | { type: "quit" };
 
-export function handleCommand(
+export async function handleCommand(
   input: string,
   ctx: CommandContext,
-): CommandResult {
+): Promise<CommandResult> {
   const trimmed = input.trim();
   const [cmd, ...args] = trimmed.split(/\s+/);
 
@@ -98,6 +99,13 @@ export function handleCommand(
       return { type: "ok" };
     }
 
+    case "/reload": {
+      // Optional target: "/reload @path" or "/reload path".
+      const target = args[0]?.replace(/^@/, "");
+      await ctx.onReloadContext(target || undefined);
+      return { type: "ok" };
+    }
+
     case "/help": {
       const lines = [
         "",
@@ -105,6 +113,7 @@ export function handleCommand(
         "  /model [<tag>]        Switch model or list available models",
         "  /sessions             List saved sessions for this project",
         "  /resume <id>          Continue a saved session",
+        "  /reload [@path]       Re-read project files — or just one — into context",
         "  /status               Show current state",
         "  /help                 Show this help",
         "  /quit                 Exit",

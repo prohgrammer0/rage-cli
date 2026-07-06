@@ -1,10 +1,16 @@
 const encoder = new TextEncoder();
 
+export interface StreamTransform {
+  push(chunk: string): string;
+  end(): string;
+}
+
 export interface StreamTextOptions {
   onStart?: () => void | Promise<void>;
   write?: (text: string) => void;
   flushIntervalMs?: number;
   flushAtChars?: number;
+  transform?: StreamTransform;
 }
 
 export interface ThinkingDisplayOptions {
@@ -59,10 +65,11 @@ export function createThinkingDisplay(
       if (!started) {
         started = true;
         options.onStart?.();
-        write(useColor ? "\x1b[2mthinking\n" : "thinking\n");
+        write(useColor ? "\x1b[2m✻ thinking\n│ " : "✻ thinking\n│ ");
       }
       const safeText = text.replaceAll("\x1b", "");
-      queue += safeText;
+      // Gutter every line so reasoning reads as one distinct block.
+      queue += safeText.replaceAll("\n", "\n│ ");
       endsWithNewline = safeText.endsWith("\n");
       draining ??= drain();
     },
@@ -74,8 +81,10 @@ export function createThinkingDisplay(
       await draining;
       if (trailerWritten) return;
       trailerWritten = true;
+      // A trailing newline leaves a dangling "│ " gutter; erase it (tty only).
+      const eraseDangling = endsWithNewline ? "\r\x1b[K" : "";
       const gap = endsWithNewline ? "\n" : "\n\n";
-      write(useColor ? `\x1b[0m${gap}` : gap);
+      write(useColor ? `${eraseDangling}\x1b[0m${gap}` : gap);
     },
   };
 }
@@ -114,7 +123,7 @@ export async function renderTextStream(
   let fullText = "";
   let pending = "";
   let started = false;
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   const flush = (): void => {
     if (timer !== undefined) {
@@ -124,7 +133,8 @@ export async function renderTextStream(
     if (!pending) return;
     const text = pending;
     pending = "";
-    write(text);
+    const out = options.transform ? options.transform.push(text) : text;
+    if (out) write(out);
   };
 
   const scheduleFlush = (): void => {
@@ -151,6 +161,10 @@ export async function renderTextStream(
     }
   } finally {
     flush();
+    if (options.transform) {
+      const tail = options.transform.end();
+      if (tail) write(tail);
+    }
   }
 
   return fullText;

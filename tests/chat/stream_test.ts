@@ -55,6 +55,23 @@ Deno.test("renderTextStream - ignores empty deltas", async () => {
   assertEquals(starts, 1);
 });
 
+Deno.test("renderTextStream - transform styles output but returns raw text", async () => {
+  const writes: string[] = [];
+
+  const result = await renderTextStream(chunks(["**bo", "ld** done\n"]), {
+    write: (text) => writes.push(text),
+    flushIntervalMs: 10_000,
+    flushAtChars: 10_000,
+    transform: {
+      push: (chunk) => chunk.toUpperCase(),
+      end: () => "<end>",
+    },
+  });
+
+  assertEquals(result, "**bold** done\n");
+  assertEquals(writes.join(""), "**BOLD** DONE\n<end>");
+});
+
 Deno.test("createThinkingDisplay - smoothly preserves the full text", async () => {
   const writes: string[] = [];
   let starts = 0;
@@ -72,7 +89,24 @@ Deno.test("createThinkingDisplay - smoothly preserves the full text", async () =
 
   assertEquals(
     writes.join(""),
-    "thinking\nChecking the full project context.\n\n",
+    "✻ thinking\n│ Checking the full project context.\n\n",
   );
   assertEquals(starts, 1);
+});
+
+Deno.test("createThinkingDisplay - gutters every reasoning line", async () => {
+  const writes: string[] = [];
+  const display = createThinkingDisplay({
+    write: (text) => writes.push(text),
+    frameIntervalMs: 0,
+    useColor: false,
+  });
+
+  display.append("first line\nsecond line");
+  await display.finish();
+
+  assertEquals(
+    writes.join(""),
+    "✻ thinking\n│ first line\n│ second line\n\n",
+  );
 });

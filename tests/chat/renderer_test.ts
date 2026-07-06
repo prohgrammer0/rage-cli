@@ -1,5 +1,5 @@
-import { assertStringIncludes } from "@std/assert";
-import { createRenderer } from "../../src/chat/renderer.ts";
+import { assertEquals, assertStringIncludes } from "@std/assert";
+import { createRenderer, responseUsageStats } from "../../src/chat/renderer.ts";
 import type { ModelEntry } from "../../src/config/models.ts";
 
 // Use color=false so we can assert on plain strings.
@@ -14,7 +14,7 @@ Deno.test("Renderer - renderPrompt includes role and model", () => {
   const prompt = r.renderPrompt("line", "gemma3:12b");
   assertStringIncludes(prompt, "line");
   assertStringIncludes(prompt, "gemma3:12b");
-  assertStringIncludes(prompt, ">");
+  assertStringIncludes(prompt, "❯");
 });
 
 Deno.test("Renderer - renderPrompt truncates model path to last segment", () => {
@@ -89,6 +89,77 @@ Deno.test("Renderer - renderTranscript does not throw", () => {
     { role: "user", content: "Review the opening." },
     { role: "assistant", content: "The opening lacks a clear focal point." },
   ]);
+});
+
+// --- renderResponseFooter ---
+
+Deno.test("Renderer - renderResponseFooter does not throw", () => {
+  const r = makeRenderer();
+  r.renderResponseFooter({
+    elapsedMs: 3214,
+    approxTokens: 1421,
+    model: "zen/claude-sonnet-5",
+  });
+  r.renderResponseFooter({
+    elapsedMs: 3214,
+    approxTokens: 1421,
+    inputTokens: 18200,
+    outputTokens: 1400,
+    costUsd: 0.0214,
+    model: "zen/claude-sonnet-5",
+  });
+});
+
+// --- responseUsageStats ---
+
+Deno.test("responseUsageStats - returns empty without usage", () => {
+  assertEquals(responseUsageStats(null, { input: 3, output: 15 }), {});
+});
+
+Deno.test("responseUsageStats - sums prompt buckets, omits cost without price", () => {
+  const stats = responseUsageStats(
+    {
+      inputTokens: 200,
+      outputTokens: 300,
+      cacheReadTokens: 1000,
+      cacheWriteTokens: 100,
+    },
+    undefined,
+  );
+  assertEquals(stats, { inputTokens: 1300, outputTokens: 300 });
+});
+
+Deno.test("responseUsageStats - prices each bucket with cache rates", () => {
+  const stats = responseUsageStats(
+    {
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      cacheReadTokens: 1_000_000,
+      cacheWriteTokens: 1_000_000,
+    },
+    { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
+  );
+  assertEquals(stats.costUsd, 3 + 15 + 0.3 + 3.75);
+});
+
+Deno.test("responseUsageStats - cache rates default to input rate", () => {
+  const stats = responseUsageStats(
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 2_000_000,
+      cacheWriteTokens: 0,
+    },
+    { input: 3, output: 15 },
+  );
+  assertEquals(stats.costUsd, 6);
+});
+
+// --- renderTurnDivider ---
+
+Deno.test("Renderer - renderTurnDivider does not throw", () => {
+  const r = makeRenderer();
+  r.renderTurnDivider();
 });
 
 // --- log levels ---

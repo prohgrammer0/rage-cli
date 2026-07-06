@@ -1,5 +1,8 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { buildProjectContextPack } from "../../src/project/context.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  buildProjectContextPack,
+  updateContextPackFile,
+} from "../../src/project/context.ts";
 
 Deno.test("buildProjectContextPack - formats external vault files deterministically", async () => {
   const dir = await Deno.makeTempDir();
@@ -186,6 +189,100 @@ Deno.test("buildProjectContextPack - context hash changes with file content", as
 
     assertEquals(first.contextHash === second.contextHash, false);
     assertEquals(first.contextHash.length, 64);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// --- updateContextPackFile ---
+
+Deno.test("updateContextPackFile - splices one fresh file, hash matches full rebuild", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${dir}/a.md`, "Alpha original");
+    await Deno.writeTextFile(`${dir}/b.md`, "Beta stays");
+    const options = {
+      sources: [],
+      vaults: [{ path: dir, name: "vault" }],
+      extensions: [".md"],
+      maxTokens: 10_000,
+    };
+    const pack = await buildProjectContextPack(options);
+
+    await Deno.writeTextFile(`${dir}/a.md`, "Alpha revised\nwith a new line");
+    const updated = await updateContextPackFile(pack, "a.md", 10_000);
+
+    assertStringIncludes(updated.content, "1: Alpha revised");
+    assertStringIncludes(updated.content, "2: with a new line");
+    assertStringIncludes(updated.content, "1: Beta stays");
+    assertEquals(updated.content.includes("Alpha original"), false);
+    assertEquals(updated.files.map((file) => file.path), ["a.md", "b.md"]);
+
+    // Same disk state fully rebuilt must produce the same hash.
+    const rebuilt = await buildProjectContextPack(options);
+    assertEquals(updated.contextHash, rebuilt.contextHash);
+    assertEquals(updated.tokenCount, rebuilt.tokenCount);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("updateContextPackFile - unchanged file keeps the same hash", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${dir}/a.md`, "Stable");
+    const pack = await buildProjectContextPack({
+      sources: [],
+      vaults: [{ path: dir, name: "vault" }],
+      extensions: [".md"],
+      maxTokens: 10_000,
+    });
+
+    const updated = await updateContextPackFile(pack, "a.md", 10_000);
+    assertEquals(updated.contextHash, pack.contextHash);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("updateContextPackFile - rejects paths not in the pack", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${dir}/a.md`, "Only file");
+    const pack = await buildProjectContextPack({
+      sources: [],
+      vaults: [{ path: dir, name: "vault" }],
+      extensions: [".md"],
+      maxTokens: 10_000,
+    });
+
+    await assertRejects(
+      () => updateContextPackFile(pack, "missing.md", 10_000),
+      Error,
+      "not in the current project context",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("updateContextPackFile - rejects growth past the token budget", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${dir}/a.md`, "small");
+    const pack = await buildProjectContextPack({
+      sources: [],
+      vaults: [{ path: dir, name: "vault" }],
+      extensions: [".md"],
+      maxTokens: 10_000,
+    });
+
+    await Deno.writeTextFile(`${dir}/a.md`, "x".repeat(200_000));
+    await assertRejects(
+      () => updateContextPackFile(pack, "a.md", 10_000),
+      Error,
+      "context.max_tokens",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -456,6 +456,216 @@ Deno.test("ZenClient - Gemini streaming yields candidate text via SSE", async ()
   );
 });
 
+// --- usage reporting ---
+
+Deno.test("ZenClient - chat streaming reports normalized usage after stop", async () => {
+  const sseBody = [
+    `data: ${
+      JSON.stringify({
+        choices: [{ delta: { content: "Text" }, finish_reason: null }],
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        choices: [{ delta: {}, finish_reason: "stop" }],
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        choices: [],
+        usage: {
+          prompt_tokens: 1200,
+          completion_tokens: 300,
+          prompt_tokens_details: { cached_tokens: 1000 },
+        },
+      })
+    }`,
+    "data: [DONE]",
+  ].join("\n") + "\n";
+
+  await withMockServer(
+    async (req) => {
+      const body = await req.json();
+      assertEquals(body.stream_options, { include_usage: true });
+      return new Response(sseBody, {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+    async (base) => {
+      const client = createZenClient(base, "key");
+      const chunks: string[] = [];
+      const usages: unknown[] = [];
+      for await (
+        const chunk of client.chat({
+          model: "minimax-m2.5",
+          messages: [],
+          stream: true,
+          onUsage: (u) => usages.push(u),
+        })
+      ) {
+        chunks.push(chunk);
+      }
+      assertEquals(chunks, ["Text"]);
+      assertEquals(usages, [{
+        inputTokens: 200,
+        outputTokens: 300,
+        cacheReadTokens: 1000,
+        cacheWriteTokens: 0,
+      }]);
+    },
+  );
+});
+
+Deno.test("ZenClient - Claude streaming merges message_start and message_delta usage", async () => {
+  const sseBody = [
+    `data: ${
+      JSON.stringify({
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 40,
+            cache_read_input_tokens: 5000,
+            cache_creation_input_tokens: 100,
+          },
+        },
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: "Text" },
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        type: "message_delta",
+        usage: { output_tokens: 250 },
+      })
+    }`,
+    `data: ${JSON.stringify({ type: "message_stop" })}`,
+  ].join("\n") + "\n";
+
+  await withMockServer(
+    () =>
+      new Response(sseBody, {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    async (base) => {
+      const client = createZenClient(base, "key");
+      const usages: Array<Record<string, number>> = [];
+      for await (
+        const _ of client.chat({
+          model: "claude-haiku-4-5",
+          messages: [],
+          stream: true,
+          onUsage: (u) => usages.push({ ...u }),
+        })
+      ) { /* consume */ }
+      assertEquals(usages.at(-1), {
+        inputTokens: 40,
+        outputTokens: 250,
+        cacheReadTokens: 5000,
+        cacheWriteTokens: 100,
+      });
+    },
+  );
+});
+
+Deno.test("ZenClient - GPT responses streaming reports usage on completion", async () => {
+  const sseBody = [
+    `data: ${
+      JSON.stringify({ type: "response.output_text.delta", delta: "Text" })
+    }`,
+    `data: ${
+      JSON.stringify({
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 900,
+            output_tokens: 120,
+            input_tokens_details: { cached_tokens: 800 },
+          },
+        },
+      })
+    }`,
+  ].join("\n") + "\n";
+
+  await withMockServer(
+    () =>
+      new Response(sseBody, {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    async (base) => {
+      const client = createZenClient(base, "key");
+      const usages: unknown[] = [];
+      for await (
+        const _ of client.chat({
+          model: "gpt-5.5",
+          messages: [],
+          stream: true,
+          onUsage: (u) => usages.push(u),
+        })
+      ) { /* consume */ }
+      assertEquals(usages, [{
+        inputTokens: 100,
+        outputTokens: 120,
+        cacheReadTokens: 800,
+        cacheWriteTokens: 0,
+      }]);
+    },
+  );
+});
+
+Deno.test("ZenClient - Gemini streaming reports cumulative usage metadata", async () => {
+  const sseBody = [
+    `data: ${
+      JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "Text" }] } }],
+        usageMetadata: { promptTokenCount: 700, candidatesTokenCount: 10 },
+      })
+    }`,
+    `data: ${
+      JSON.stringify({
+        candidates: [{
+          content: { parts: [{ text: " more" }] },
+          finishReason: "STOP",
+        }],
+        usageMetadata: {
+          promptTokenCount: 700,
+          candidatesTokenCount: 80,
+          thoughtsTokenCount: 20,
+          cachedContentTokenCount: 500,
+        },
+      })
+    }`,
+  ].join("\n") + "\n";
+
+  await withMockServer(
+    () =>
+      new Response(sseBody, {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    async (base) => {
+      const client = createZenClient(base, "key");
+      const usages: Array<Record<string, number>> = [];
+      for await (
+        const _ of client.chat({
+          model: "gemini-3.5-flash",
+          messages: [],
+          stream: true,
+          onUsage: (u) => usages.push({ ...u }),
+        })
+      ) { /* consume */ }
+      assertEquals(usages.at(-1), {
+        inputTokens: 200,
+        outputTokens: 100,
+        cacheReadTokens: 500,
+        cacheWriteTokens: 0,
+      });
+    },
+  );
+});
+
 Deno.test("ZenClient - chat streaming stops at [DONE]", async () => {
   const sseBody = [
     `data: ${

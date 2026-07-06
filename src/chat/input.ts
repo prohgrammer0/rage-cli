@@ -20,6 +20,7 @@ const COMMANDS = [
   "/role",
   "/status",
   "/resume",
+  "/reload",
   "/sessions",
 ];
 

@@ -45,6 +45,34 @@ Deno.test("ModelRegistry - initialize marks correct models as available", async 
   assertEquals(tags.includes("gpt-5.5-pro"), true);
 });
 
+Deno.test("ModelRegistry - carries price from config registry", async () => {
+  const reg = await makeRegistry();
+  reg.initialize(ZEN_MODELS);
+
+  const entries = reg.getAvailable("line_edit");
+  const opus = entries.find((e) => e.tag === "claude-opus-4-8");
+  assertExists(opus?.price);
+  assertEquals(opus.price.input, 5.0);
+  assertEquals(opus.price.output, 25.0);
+  assertEquals(opus.price.cache_read, 0.5);
+  assertEquals(opus.price.cache_write, 6.25);
+
+  const deepseek = entries.find((e) => e.tag === "deepseek-v4-flash");
+  assertExists(deepseek?.price);
+  assertEquals(deepseek.price.input, 0.14);
+  assertEquals(deepseek.price.cache_write, undefined);
+});
+
+Deno.test("loadConfig - default config carries pricing provenance", async () => {
+  const config = await loadConfig({});
+  assertExists(config.models.pricing);
+  assertEquals(config.models.pricing.updated, "2026-07-06");
+  assertEquals(
+    config.models.pricing.source,
+    "https://opencode.ai/docs/zen/#pricing",
+  );
+});
+
 Deno.test("ModelRegistry - unavailable models not in getAvailable", async () => {
   const reg = await makeRegistry();
   reg.initialize([]);

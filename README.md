@@ -27,8 +27,8 @@ At startup, RAGE:
 
 The pack is placed in the stable system prompt and sent with every request
 through OpenCode Zen. Claude and Qwen requests mark that stable prompt
-cacheable. The pack is built once per session, so restart RAGE after changing
-project files.
+cacheable. The pack is built once at startup and kept stable; run `/reload` to
+re-read project files mid-session (see "Iterating on Revisions").
 
 **Line editor** — sentence and paragraph-level critique. Clarity, word choice,
 rhythm, redundancy, grammar, precision.
@@ -44,7 +44,7 @@ the writing.
 - Generate prose, rewrites, or suggestions
 - Modify your files
 - Index, embed, chunk, or retrieve project files
-- Refresh project files while a session is running
+- Watch the filesystem: context refreshes only when you run `/reload`
 - Hide cloud context use: included source files are sent to Zen/provider for
   critique
 
@@ -180,6 +180,7 @@ history.
 /model <tag>        Switch model (resets conversation)
 /sessions           List saved sessions for the selected project
 /resume <id>        Restore and continue a saved session
+/reload [@path]     Re-read project files — or just one — into context
 /status             Show current state
 /help               List commands
 /quit               Exit
@@ -188,6 +189,36 @@ history.
 Slash commands show dimmed ghost completion as you type. For example, `/res`
 completes to `/resume` and `/se` completes to `/sessions`. Press Tab or → to
 accept the suggestion.
+
+## Iterating on Revisions
+
+The project context is built once at startup and stays stable so provider prompt
+caching keeps repeat prompts cheap. When you revise the text mid-session, there
+are two ways to talk through the changes:
+
+1. **Paste the revised passage into the prompt.** Bracketed paste keeps
+   multiline text as one message, so you can drop in a rewritten paragraph and
+   ask for another look. Best for quick iteration on a passage: it costs only
+   the pasted tokens, and the cached project context stays warm.
+
+2. **Save the file and run `/reload`.** RAGE re-reads the configured sources and
+   swaps the fresh files into context, keeping the conversation going. Best when
+   the revision is spread across a file or several files, or when you want
+   line-number citations against the current text. The next prompt rewrites the
+   prompt cache (one-time cost shown in the response footer; subsequent prompts
+   are cheap again). If nothing changed on disk, `/reload` says so and leaves
+   the cache untouched.
+
+   To pick up just the file you're working on, target it:
+
+   ```
+   /reload @roh/drafts/102-priorities.md
+   ```
+
+   Only that file is re-read — faster than a full rebuild, and other files you
+   may have touched stay out of context until you reload them. Ghost completion
+   works after `@`, same as in prompts. Targeted reload only refreshes files
+   already in context; use plain `/reload` to pick up brand-new files.
 
 ## @-Path Completion
 

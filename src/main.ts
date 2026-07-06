@@ -2,7 +2,10 @@ import { parseArgs } from "@std/cli/parse-args";
 import { loadConfig } from "./config/loader.ts";
 import { createModelRegistry } from "./config/models.ts";
 import { createZenClient } from "./providers/zen.ts";
-import { buildProjectContextPack } from "./project/context.ts";
+import {
+  buildProjectContextPack,
+  updateContextPackFile,
+} from "./project/context.ts";
 import { createLineEditor } from "./chat/line.ts";
 import { createDevEditor } from "./chat/developmental.ts";
 import { createRenderer } from "./chat/renderer.ts";
@@ -212,6 +215,12 @@ async function main(): Promise<void> {
       projectContext!.tokenCount.toLocaleString()
     } tokens.`,
   );
+  if (config.models.pricing) {
+    renderer.log(
+      "info",
+      `Model prices last updated ${config.models.pricing.updated} (${config.models.pricing.source}).`,
+    );
+  }
   if (projectContext!.filesSkipped > 0) {
     renderer.log(
       "warn",
@@ -224,10 +233,31 @@ async function main(): Promise<void> {
   const lineModel = registry.resolve("line_edit")!;
   const devModel = registry.resolve("developmental")!;
 
+  // /reload swaps this reference; editors read it through the getter on every
+  // send. Only main.ts reads project files. With a target, only that file is
+  // re-read and spliced into the pack.
+  let activeProjectContext = projectContext!;
+  const reloadContext = async (target?: string) => {
+    activeProjectContext = target
+      ? await updateContextPackFile(
+        activeProjectContext,
+        target,
+        config.context.max_tokens,
+      )
+      : await buildProjectContextPack({
+        sources: config.context.sources,
+        vaults: config.vaults,
+        extensions: config.context.extensions,
+        maxTokens: config.context.max_tokens,
+      });
+    return activeProjectContext;
+  };
+
   const lineEditor = createLineEditor(
     {
       getModel: () => registry.resolve("line_edit")?.tag ?? lineModel.tag,
-      projectContext: projectContext!,
+      getPrice: () => registry.resolve("line_edit")?.price,
+      getProjectContext: () => activeProjectContext,
       cacheProjectContext: config.context.cache,
     },
     zenClient!,
@@ -237,7 +267,8 @@ async function main(): Promise<void> {
   const devEditor = createDevEditor(
     {
       getModel: () => registry.resolve("developmental")?.tag ?? devModel.tag,
-      projectContext: projectContext!,
+      getPrice: () => registry.resolve("developmental")?.price,
+      getProjectContext: () => activeProjectContext,
       cacheProjectContext: config.context.cache,
     },
     zenClient!,
@@ -245,12 +276,12 @@ async function main(): Promise<void> {
   );
 
   const sources = sourceLabel(config);
-  const projectFilePaths = projectContext!.files.map((file) => file.path);
 
   try {
     await runRepl({
       initialRole: "line",
-      getFilePaths: () => projectFilePaths,
+      getFilePaths: () => activeProjectContext.files.map((file) => file.path),
+      reloadContext,
       sessionStore,
       sessionProject: config.selected_project ?? sources,
       sourceLabel: sources,
@@ -267,6 +298,7 @@ async function main(): Promise<void> {
         onModelChange: () => {},
         onListSessions: () => {},
         onResumeSession: () => {},
+        onReloadContext: () => Promise.resolve(),
         getSessionId: () => null,
         onQuit: () => {},
       },

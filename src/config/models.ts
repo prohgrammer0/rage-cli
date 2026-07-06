@@ -1,6 +1,6 @@
-import type { AppConfig, ModelRole } from "./schema.ts";
+import type { AppConfig, ModelPriceConfig, ModelRole } from "./schema.ts";
 
-export type { ModelRole };
+export type { ModelPriceConfig, ModelRole };
 export type ModelProvider = "zen";
 
 export interface ModelEntry {
@@ -9,6 +9,7 @@ export interface ModelEntry {
   roles: ModelRole[];
   available: boolean;
   notes: string;
+  price?: ModelPriceConfig;
 }
 
 export interface ModelRegistry {
@@ -51,6 +52,7 @@ export function createModelRegistry(config: AppConfig): ModelRegistry {
       roles: entry.roles as ModelRole[],
       available: false,
       notes: entry.notes,
+      price: entry.price,
     });
   }
 

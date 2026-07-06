@@ -42,14 +42,32 @@ export interface RoleModelConfig {
   default: string;
 }
 
+// USD per million tokens. cache_read/cache_write default to the input rate
+// when omitted.
+export interface ModelPriceConfig {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+}
+
 export interface CloudModelRegistryEntry {
   roles: ModelRole[];
   notes: string;
+  price?: ModelPriceConfig;
+}
+
+// Provenance of the registry price data. Logged once at session start so the
+// user knows how stale the rates are and where to refresh them from.
+export interface PricingMetaConfig {
+  updated: string;
+  source: string;
 }
 
 export interface ModelsConfig {
   line_edit: RoleModelConfig;
   developmental: RoleModelConfig;
+  pricing?: PricingMetaConfig;
   registry: {
     cloud: Record<string, CloudModelRegistryEntry>;
   };

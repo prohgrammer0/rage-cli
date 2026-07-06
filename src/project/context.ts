@@ -2,6 +2,8 @@ import type { ProjectSourceEntry, VaultEntry } from "../config/schema.ts";
 
 export interface ProjectContextFile {
   path: string;
+  absolutePath: string;
+  block: string;
   tokenCount: number;
 }
 
@@ -33,15 +35,7 @@ export async function buildProjectContextPack(
     a.displayPath === b.displayPath ? 0 : a.displayPath < b.displayPath ? -1 : 1
   );
 
-  const header = [
-    "<project_context>",
-    "The files below are the user's project knowledge. File paths and line numbers are authoritative for citations.",
-    "",
-  ].join("\n");
-  const footer = "\n</project_context>";
-
-  let content = header;
-  let tokenCount = estimateTokens(header + footer);
+  let tokenCount = estimateTokens(PACK_HEADER + PACK_FOOTER);
   let filesSkipped = 0;
   const included: ProjectContextFile[] = [];
 
@@ -55,22 +49,76 @@ export async function buildProjectContextPack(
       continue;
     }
 
-    content += block;
     tokenCount += blockTokens;
-    included.push({ path: file.displayPath, tokenCount: blockTokens });
+    included.push({
+      path: file.displayPath,
+      absolutePath: file.absolutePath,
+      block,
+      tokenCount: blockTokens,
+    });
   }
 
-  content += footer;
-  tokenCount = estimateTokens(content);
+  return { ...await assemblePack(included), filesSkipped };
+}
 
-  const finalContent = included.length === 0 ? "" : content;
+const PACK_HEADER = [
+  "<project_context>",
+  "The files below are the user's project knowledge. File paths and line numbers are authoritative for citations.",
+  "",
+].join("\n");
+const PACK_FOOTER = "\n</project_context>";
+
+async function assemblePack(
+  included: ProjectContextFile[],
+): Promise<Omit<ProjectContextPack, "filesSkipped">> {
+  const content = included.length === 0
+    ? ""
+    : PACK_HEADER + included.map((file) => file.block).join("") + PACK_FOOTER;
+
   return {
-    content: finalContent,
-    tokenCount: included.length === 0 ? 0 : tokenCount,
-    contextHash: await hashText(finalContent),
+    content,
+    tokenCount: estimateTokens(content),
+    contextHash: await hashText(content),
     files: included,
-    filesSkipped,
   };
+}
+
+/**
+ * Re-reads one already-included file and splices its fresh block into a new
+ * pack. Other files keep their in-pack content, so a later full rebuild of the
+ * same disk state produces the same contextHash. Throws — leaving the caller's
+ * pack untouched — when the path is not in the pack, the file cannot be read,
+ * or the updated pack would exceed maxTokens.
+ */
+export async function updateContextPackFile(
+  pack: ProjectContextPack,
+  displayPath: string,
+  maxTokens: number,
+): Promise<ProjectContextPack> {
+  const index = pack.files.findIndex((file) => file.path === displayPath);
+  if (index === -1) {
+    throw new Error(
+      `"${displayPath}" is not in the current project context. Use an @path from this project or run /reload for a full rebuild.`,
+    );
+  }
+
+  const current = pack.files[index];
+  const raw = await Deno.readTextFile(current.absolutePath);
+  const block = formatFileBlock(current.path, raw);
+  const files = pack.files.with(index, {
+    ...current,
+    block,
+    tokenCount: estimateTokens(block),
+  });
+
+  const updated = await assemblePack(files);
+  if (updated.tokenCount > maxTokens) {
+    throw new Error(
+      `Reloading "${displayPath}" would grow the context to about ${updated.tokenCount.toLocaleString()} tokens, over the context.max_tokens budget of ${maxTokens.toLocaleString()}. Raise the budget or run /reload for a full rebuild.`,
+    );
+  }
+
+  return { ...updated, filesSkipped: pack.filesSkipped };
 }
 
 async function collectFiles(

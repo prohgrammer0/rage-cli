@@ -8,8 +8,9 @@ all module interfaces.
 **Full project context:** RAGE does not use RAG, embeddings, vector storage, or
 local chat. On startup, it walks configured Obsidian vault paths, builds one
 deterministic project context pack, and sends that stable context with each
-prompt. SQLite is used only for durable session metadata and message history;
-project content never enters the database.
+prompt. `/reload` rebuilds the pack mid-session (only `main.ts` reads files;
+chat modules receive it through a getter). SQLite is used only for durable
+session metadata and message history; project content never enters the database.
 
 **Cloud-only chat:** Both editors (line and developmental) use Zen for
 inference. Claude/Qwen models use Zen's `/messages` endpoint with cache control

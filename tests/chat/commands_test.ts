@@ -26,6 +26,7 @@ async function makeCtx(): Promise<{
   modelChanges: string[];
   listedSessions: number[];
   resumedSessions: number[];
+  reloads: Array<string | undefined>;
   quits: number;
 }> {
   const config = await loadConfig({});
@@ -36,6 +37,7 @@ async function makeCtx(): Promise<{
   const modelChanges: string[] = [];
   const listedSessions: number[] = [];
   const resumedSessions: number[] = [];
+  const reloads: Array<string | undefined> = [];
   let quits = 0;
 
   const ctx: CommandContext = {
@@ -49,6 +51,10 @@ async function makeCtx(): Promise<{
     onModelChange: (m) => modelChanges.push(m),
     onListSessions: () => listedSessions.push(1),
     onResumeSession: (id) => resumedSessions.push(id),
+    onReloadContext: (target) => {
+      reloads.push(target);
+      return Promise.resolve();
+    },
     getSessionId: () => 42,
     onQuit: () => quits++,
   };
@@ -59,6 +65,7 @@ async function makeCtx(): Promise<{
     modelChanges,
     listedSessions,
     resumedSessions,
+    reloads,
     quits,
   };
 }
@@ -135,6 +142,25 @@ Deno.test("Commands - /resume rejects an invalid session ID", async () => {
   const result = await handleCommand("/resume nope", ctx);
   assertEquals(result.type, "ok");
   assertEquals(resumedSessions, []);
+});
+
+// --- /reload ---
+
+Deno.test("Commands - /reload invokes the context reload callback", async () => {
+  const { ctx, reloads } = await makeCtx();
+  const result = await handleCommand("/reload", ctx);
+  assertEquals(result.type, "ok");
+  assertEquals(reloads, [undefined]);
+});
+
+Deno.test("Commands - /reload @path forwards the target without the @", async () => {
+  const { ctx, reloads } = await makeCtx();
+  await handleCommand("/reload @roh/drafts/102-priorities.md", ctx);
+  await handleCommand("/reload roh/drafts/102-priorities.md", ctx);
+  assertEquals(reloads, [
+    "roh/drafts/102-priorities.md",
+    "roh/drafts/102-priorities.md",
+  ]);
 });
 
 // --- /quit ---

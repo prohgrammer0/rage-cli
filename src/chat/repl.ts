@@ -6,6 +6,7 @@ import { handleCommand } from "./commands.ts";
 import { readMultilineInput } from "./input.ts";
 import { PromptHistory } from "./history.ts";
 import type { SessionRecord, SessionStore } from "../sessions/store.ts";
+import type { ProjectContextPack } from "../project/context.ts";
 
 export interface ReplConfig {
   initialRole: EditorRole;
@@ -14,6 +15,7 @@ export interface ReplConfig {
   devEditor: DevEditorSession;
   renderer: Renderer;
   getFilePaths: () => string[];
+  reloadContext: (target?: string) => Promise<ProjectContextPack>;
   sessionStore: SessionStore | null;
   sessionProject: string;
   sourceLabel: string;
@@ -120,6 +122,52 @@ export async function runRepl(config: ReplConfig): Promise<void> {
     restoreSession(id);
   };
 
+  config.commandContext.onReloadContext = async (target?: string) => {
+    let pack: ProjectContextPack;
+    try {
+      pack = await config.reloadContext(target);
+    } catch (error) {
+      config.renderer.log(
+        "error",
+        `Reload failed; keeping the current project context: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    const changed = pack.contextHash !== config.contextHash;
+    config.contextHash = pack.contextHash;
+    config.commandContext.fileCount = pack.files.length;
+    config.commandContext.contextTokens = pack.tokenCount;
+    if (!changed) {
+      config.renderer.log(
+        "info",
+        target ? `"${target}" is unchanged.` : "Project files are unchanged.",
+      );
+      return;
+    }
+    if (target) {
+      const file = pack.files.find((f) => f.path === target);
+      config.renderer.log(
+        "info",
+        `Reloaded ${target}: about ${
+          (file?.tokenCount ?? 0).toLocaleString()
+        } tokens (context total ${pack.tokenCount.toLocaleString()}). Conversation kept; the next prompt rewrites the prompt cache.`,
+      );
+      return;
+    }
+    config.renderer.log(
+      "info",
+      `Reloaded project context: ${pack.files.length} file(s), about ${pack.tokenCount.toLocaleString()} tokens. Conversation kept; the next prompt rewrites the prompt cache.`,
+    );
+    if (pack.filesSkipped > 0) {
+      config.renderer.log(
+        "warn",
+        `${pack.filesSkipped} file(s) did not fit in context.max_tokens and were skipped.`,
+      );
+    }
+  };
+
   config.commandContext.getSessionId = () => currentSession?.id ?? null;
 
   config.commandContext.onQuit = () => {
@@ -150,7 +198,7 @@ export async function runRepl(config: ReplConfig): Promise<void> {
     let active = true;
     let visible = false;
     let i = 0;
-    let interval: number | undefined;
+    let interval: ReturnType<typeof setInterval> | undefined;
     const delay = setTimeout(() => {
       if (!active) return;
       visible = true;
@@ -172,8 +220,13 @@ export async function runRepl(config: ReplConfig): Promise<void> {
     };
   }
 
+  let firstPrompt = true;
+
   while (!quit) {
     config.commandContext.role = role;
+
+    if (!firstPrompt) config.renderer.renderTurnDivider();
+    firstPrompt = false;
 
     const prompt = config.renderer.renderPrompt(
       role,

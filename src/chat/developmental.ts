@@ -1,8 +1,11 @@
-import type { ZenClient } from "../providers/zen.ts";
+import type { TokenUsage, ZenClient } from "../providers/zen.ts";
+import type { ModelPriceConfig } from "../config/models.ts";
 import type { Renderer } from "./renderer.ts";
+import { responseUsageStats } from "./renderer.ts";
 import type { ProjectContextPack } from "../project/context.ts";
 import type { SessionMessage } from "../sessions/store.ts";
 import { createThinkingDisplay, renderTextStream } from "./stream.ts";
+import { createMarkdownStream } from "./markdown.ts";
 
 const DEV_SYSTEM_PROMPT =
   `You are a developmental editor reviewing markdown documents. Your job is to
@@ -33,7 +36,8 @@ export interface DevEditorSession {
 
 export interface DevEditorConfig {
   getModel: () => string;
-  projectContext: ProjectContextPack;
+  getPrice: () => ModelPriceConfig | undefined;
+  getProjectContext: () => ProjectContextPack;
   cacheProjectContext: boolean;
 }
 
@@ -53,7 +57,7 @@ export function createDevEditor(
     ): Promise<string | null> {
       const systemContent = DEV_SYSTEM_PROMPT.replace(
         "{projectContext}",
-        config.projectContext.content,
+        config.getProjectContext().content,
       );
 
       const messages: Message[] = [
@@ -70,6 +74,8 @@ export function createDevEditor(
         onStart?.();
       };
       const thinking = createThinkingDisplay({ onStart: stopSpinner });
+      const startedAt = performance.now();
+      let usage: TokenUsage | null = null;
 
       try {
         const fullResponse = await renderTextStream(
@@ -80,8 +86,12 @@ export function createDevEditor(
             cacheSystemPrompt: config.cacheProjectContext,
             signal,
             onThinking: thinking.append,
+            onUsage: (u) => {
+              usage = u;
+            },
           }),
           {
+            transform: createMarkdownStream({ marker: "●" }),
             onStart: async () => {
               await thinking.finish();
               outputStarted = true;
@@ -93,6 +103,13 @@ export function createDevEditor(
         await thinking.finish();
         stopSpinner();
         Deno.stdout.writeSync(new TextEncoder().encode("\n\n"));
+        renderer.renderResponseFooter({
+          elapsedMs: performance.now() - startedAt,
+          approxTokens: Math.ceil(fullResponse.length / 4),
+          ...responseUsageStats(usage, config.getPrice()),
+          model: config.getModel(),
+        });
+        Deno.stdout.writeSync(new TextEncoder().encode("\n"));
         history.push({ role: "user", content: message });
         history.push({ role: "assistant", content: fullResponse });
         return fullResponse;

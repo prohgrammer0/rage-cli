@@ -1,6 +1,8 @@
 import { bold, cyan, gray, green, red, yellow } from "@std/fmt/colors";
-import type { ModelEntry } from "../config/models.ts";
+import type { ModelEntry, ModelPriceConfig } from "../config/models.ts";
 import type { SessionMessage, SessionSummary } from "../sessions/store.ts";
+import type { TokenUsage } from "../providers/zen.ts";
+import { styleMarkdown } from "./markdown.ts";
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
 export type EditorRole = "line" | "dev";
@@ -18,6 +20,15 @@ export interface RenderOptions {
   useColor: boolean;
 }
 
+export interface ResponseStats {
+  elapsedMs: number;
+  approxTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  model: string;
+}
+
 export interface Renderer {
   renderPrompt(role: EditorRole, model: string): string;
   log(level: LogLevel, msg: string): void;
@@ -25,6 +36,8 @@ export interface Renderer {
   renderStatus(state: StatusState): void;
   renderSessionList(sessions: SessionSummary[]): void;
   renderTranscript(messages: SessionMessage[]): void;
+  renderResponseFooter(stats: ResponseStats): void;
+  renderTurnDivider(): void;
 }
 
 export function createRenderer(options?: Partial<RenderOptions>): Renderer {
@@ -49,11 +62,11 @@ export function createRenderer(options?: Partial<RenderOptions>): Renderer {
       const roleLabel = role === "line" ? "line" : "dev";
       const shortModel = model.includes("/") ? model.split("/").pop()! : model;
       if (useColor) {
-        return `${color(cyan, `[${roleLabel} • ${shortModel}]`)} ${
-          color(bold, ">")
+        return `\x1b[2m${roleLabel} · ${shortModel}\x1b[0m ${
+          color(cyan, color(bold, "❯"))
         } `;
       }
-      return `[${roleLabel} • ${shortModel}] > `;
+      return `${roleLabel} · ${shortModel} ❯ `;
     },
 
     log(level: LogLevel, msg: string): void {
@@ -133,11 +146,87 @@ export function createRenderer(options?: Partial<RenderOptions>): Renderer {
 
       print("\n");
       for (const message of messages) {
-        const label = message.role === "user"
-          ? color(cyan, "you")
-          : color(green, "assistant");
-        print(`${label}\n${message.content.trimEnd()}\n\n`);
+        if (message.role === "user") {
+          print(`${color(cyan, "❯")} ${message.content.trimEnd()}\n\n`);
+        } else {
+          const styled = styleMarkdown(message.content.trimEnd(), {
+            useColor,
+            marker: "●",
+          });
+          print(`${styled}\n\n`);
+        }
       }
     },
+
+    renderResponseFooter(stats: ResponseStats): void {
+      const seconds = (stats.elapsedMs / 1000).toFixed(1);
+      const tokens =
+        stats.inputTokens !== undefined && stats.outputTokens !== undefined
+          ? `${compactCount(stats.inputTokens)}→${
+            compactCount(stats.outputTokens)
+          } tokens`
+          : `~${compactCount(stats.approxTokens)} tokens`;
+      const cost = stats.costUsd !== undefined
+        ? ` · ${formatUsd(stats.costUsd)}`
+        : "";
+      const shortModel = stats.model.includes("/")
+        ? stats.model.split("/").pop()!
+        : stats.model;
+      print(
+        color(
+          gray,
+          `  ↳ ${seconds}s · ${tokens}${cost} · ${shortModel}`,
+        ) + "\n",
+      );
+    },
+
+    renderTurnDivider(): void {
+      print(color(gray, "─".repeat(terminalWidth())) + "\n");
+    },
   };
+}
+
+/**
+ * Maps provider usage onto footer stats. inputTokens shown to the user is the
+ * full prompt size (uncached + cache reads/writes); cost is priced per bucket,
+ * with cache rates falling back to the input rate when not configured.
+ */
+export function responseUsageStats(
+  usage: TokenUsage | null,
+  price: ModelPriceConfig | undefined,
+): Pick<ResponseStats, "inputTokens" | "outputTokens" | "costUsd"> {
+  if (!usage) return {};
+  const stats: Pick<
+    ResponseStats,
+    "inputTokens" | "outputTokens" | "costUsd"
+  > = {
+    inputTokens: usage.inputTokens + usage.cacheReadTokens +
+      usage.cacheWriteTokens,
+    outputTokens: usage.outputTokens,
+  };
+  if (price) {
+    stats.costUsd = (usage.inputTokens * price.input +
+      usage.outputTokens * price.output +
+      usage.cacheReadTokens * (price.cache_read ?? price.input) +
+      usage.cacheWriteTokens * (price.cache_write ?? price.input)) / 1_000_000;
+  }
+  return stats;
+}
+
+function compactCount(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function formatUsd(cost: number): string {
+  if (cost >= 0.01) return `$${cost.toFixed(2)}`;
+  if (cost >= 0.0001) return `$${cost.toFixed(4)}`;
+  return "<$0.0001";
+}
+
+function terminalWidth(): number {
+  try {
+    return Deno.consoleSize().columns;
+  } catch {
+    return 80;
+  }
 }

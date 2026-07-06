@@ -17,6 +17,16 @@ cache = true
 enabled = true
 path = "./data/sessions.db"
 
+# Model registry entries may carry a `price` table (USD per million tokens)
+# used to show per-response cost in the footer. cache_read/cache_write default
+# to the input rate when omitted. Entries without a price show tokens but no
+# cost.
+#   price = { input = 3.0, output = 15.0, cache_read = 0.3, cache_write = 3.75 }
+#
+# Prices below are from [models.pricing].source, as of [models.pricing].updated.
+# Tiered models (Gemini 3.1 Pro >200K, GPT 5.5 >272K) use the lower tier, which
+# holds for the default context.max_tokens of 180000.
+
 # LINE EDITOR: CLOUD
 # Fast long-context model for prose-level critique.
 [models.line_edit]
@@ -29,53 +39,71 @@ default = "deepseek-v4-flash"
 provider = "zen"
 default = "deepseek-v4-pro"
 
+# Where the registry prices came from and when they were last verified.
+# Logged at session start. Update both fields when refreshing prices.
+[models.pricing]
+updated = "2026-07-06"
+source = "https://opencode.ai/docs/zen/#pricing"
+
 [models.registry.cloud."gemini-3.5-flash"]
 roles = ["line_edit", "developmental"]
 notes = "Gemini 3.5 Flash. Fast 1M-context option."
+price = { input = 1.50, output = 9.00, cache_read = 0.15 }
 
 [models.registry.cloud."gemini-3.1-pro"]
 roles = ["line_edit", "developmental"]
 notes = "Gemini 3.1 Pro. Strong 1M-context project-level reader."
+price = { input = 2.00, output = 12.00, cache_read = 0.20 }
 
 [models.registry.cloud."claude-opus-4-8"]
 roles = ["line_edit", "developmental"]
 notes = "Claude Opus 4.8. Highest-cost cached 1M-context option for difficult reads."
+price = { input = 5.00, output = 25.00, cache_read = 0.50, cache_write = 6.25 }
 
 [models.registry.cloud."claude-sonnet-4-6"]
 roles = ["line_edit", "developmental"]
 notes = "Claude Sonnet 4.6. Balanced cached 1M-context option."
+price = { input = 3.00, output = 15.00, cache_read = 0.30, cache_write = 3.75 }
 
 [models.registry.cloud."deepseek-v4-pro"]
 roles = ["line_edit", "developmental"]
 notes = "DeepSeek V4 Pro. Strong open-weight 1M-context default for developmental editing."
+price = { input = 1.74, output = 3.48, cache_read = 0.145 }
 
 [models.registry.cloud."deepseek-v4-flash"]
 roles = ["line_edit", "developmental"]
 notes = "DeepSeek V4 Flash. Fast, economical open-weight 1M-context default for line editing."
+price = { input = 0.14, output = 0.28, cache_read = 0.028 }
 
 [models.registry.cloud."glm-5.2"]
 roles = ["line_edit", "developmental"]
 notes = "GLM 5.2 via Zen's OpenAI-compatible endpoint."
+price = { input = 1.40, output = 4.40, cache_read = 0.26 }
 
 [models.registry.cloud."kimi-k2.6"]
 roles = ["line_edit", "developmental"]
 notes = "Kimi K2.6 via Zen's OpenAI-compatible endpoint."
+price = { input = 0.95, output = 4.00, cache_read = 0.16 }
 
 [models.registry.cloud."qwen3.6-plus"]
 roles = ["line_edit", "developmental"]
 notes = "Qwen3.6 Plus. Current Zen Qwen long-context model; Anthropic-compatible cached endpoint."
+price = { input = 0.50, output = 3.00, cache_read = 0.05, cache_write = 0.625 }
 
 [models.registry.cloud."minimax-m2.7"]
 roles = ["line_edit", "developmental"]
 notes = "MiniMax M2.7 via Zen's OpenAI-compatible endpoint."
+price = { input = 0.30, output = 1.20, cache_read = 0.06 }
 
 [models.registry.cloud."gpt-5.5-pro"]
 roles = ["line_edit", "developmental"]
 notes = "GPT-5.5 Pro. Strong 1M-context OpenAI-compatible model."
+price = { input = 30.00, output = 180.00, cache_read = 30.00 }
 
 [models.registry.cloud."gpt-5.5"]
 roles = ["line_edit", "developmental"]
 notes = "GPT-5.5. General 1M-context OpenAI-compatible model."
+price = { input = 5.00, output = 30.00, cache_read = 0.50 }
 
 [zen]
 api_key_env = "RAGE_ZEN_API_KEY"
